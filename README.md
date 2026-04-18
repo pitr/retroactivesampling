@@ -1,0 +1,88 @@
+# Retroactive Sampling
+
+Tail-based sampling for OpenTelemetry without a central aggregator.
+
+Spans are buffered on disk per collector host. A trace is kept if any collector sees it as interesting (error status, high latency). Coordinators propagate that decision to all other collectors via Redis pub/sub.
+
+## Components
+
+- **`coordinator/`** — standalone service: receives interesting-trace notifications via gRPC, deduplicates with Redis `SET NX`, broadcasts decisions to all connected processors.
+- **`processor/`** — otelcol processor plugin: buffers spans in BBolt, evaluates rules after `buffer_ttl`, ingests or drops after `drop_ttl`.
+
+## Running the coordinator
+
+### Build
+
+```bash
+make build
+# produces bin/coordinator
+```
+
+### Configure
+
+Edit `config/coordinator.yaml`:
+
+```yaml
+grpc_listen: :9090        # gRPC listen address for processor connections
+redis_addr: redis:6379    # Redis for cross-instance coordination
+decided_key_ttl: 60s      # dedup key TTL — must exceed your trace lifetime
+```
+
+### Run
+
+```bash
+bin/coordinator --config config/coordinator.yaml
+```
+
+For HA, run multiple instances behind any load balancer (standard round-robin). Each instance subscribes to the same Redis channel and broadcasts to its own connected processors.
+
+## Building the collector
+
+Install the [OpenTelemetry Collector Builder](https://github.com/open-telemetry/opentelemetry-collector/tree/main/cmd/builder):
+
+```bash
+go install go.opentelemetry.io/collector/cmd/builder@v0.150.0
+```
+
+Build a collector binary with the retroactive_sampling processor included:
+
+```bash
+make collector
+# produces bin/otelcol-retrosampling
+```
+
+## Running the collector
+
+```bash
+bin/otelcol-retrosampling --config config/otelcol.yaml
+```
+
+Processor config options:
+
+| Key | Default | Description |
+|---|---|---|
+| `buffer_db_path` | — | Path to BBolt database file |
+| `buffer_ttl` | `10s` | Wait after last span before evaluating a trace |
+| `drop_ttl` | `30s` | Wait for coordinator signal before dropping |
+| `interest_cache_ttl` | `60s` | How long to fast-path a known-interesting trace |
+| `coordinator_endpoint` | — | `host:port` of coordinator gRPC server |
+| `rules` | — | List of sampling rules (see below) |
+
+### Rules
+
+```yaml
+rules:
+  - type: error_status          # keep any trace with a StatusCodeError span
+  - type: high_latency
+    threshold: 5s               # keep any trace with a span >= 5s duration
+```
+
+Rules are evaluated with OR logic — any match marks the trace as interesting.
+
+## Development
+
+```bash
+make test                # unit tests
+make test-integration    # integration tests (requires Docker)
+make proto               # regenerate gRPC code from proto/coordinator.proto
+```
