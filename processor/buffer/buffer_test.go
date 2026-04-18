@@ -97,3 +97,23 @@ func TestEvictOldestFIFO(t *testing.T) {
 	_, ok, _ = buf.Read("traceB")
 	assert.True(t, ok, "newer trace should remain")
 }
+
+func TestEvictOldestOnEmptyBuffer(t *testing.T) {
+	buf := newTestBuffer(t)
+	evicted, err := buf.EvictOldest()
+	require.NoError(t, err)
+	assert.Equal(t, "", evicted, "empty buffer should return empty string")
+}
+
+func TestReadMissingTrace(t *testing.T) {
+	buf := newTestBuffer(t)
+	_, ok, err := buf.Read("nonexistent")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestDeleteNonExistent(t *testing.T) {
+	buf := newTestBuffer(t)
+	err := buf.Delete("nonexistent")
+	require.NoError(t, err, "delete of nonexistent trace should be idempotent")
+}

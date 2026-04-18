@@ -94,7 +94,7 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 	var data []byte
 	err := b.db.View(func(tx *bolt.Tx) error {
 		v := tx.Bucket(tracesBucket).Get([]byte(traceID))
-		if v != nil && len(v) > 8 {
+		if v != nil && len(v) >= 8 {
 			data = make([]byte, len(v)-8)
 			copy(data, v[8:])
 		}
@@ -156,8 +156,12 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 		if !isDiskFull(err) {
 			return err
 		}
-		if _, evictErr := b.EvictOldest(); evictErr != nil {
+		id, evictErr := b.EvictOldest()
+		if evictErr != nil {
 			return evictErr
+		}
+		if id == "" {
+			return err // disk full, nothing left to evict
 		}
 	}
 }
