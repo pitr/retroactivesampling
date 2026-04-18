@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 
-	"retroactivesampling/processor/buffer"
-	"retroactivesampling/processor/cache"
-	coord "retroactivesampling/processor/coordinator"
-	"retroactivesampling/processor/evaluator"
+	"retroactivesampling/processor/retroactivesampling/internal/buffer"
+	"retroactivesampling/processor/retroactivesampling/internal/cache"
+	coord "retroactivesampling/processor/retroactivesampling/internal/coordinator"
+	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 type retroactiveProcessor struct {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"retroactivesampling/processor/cache"
+	"retroactivesampling/processor/retroactivesampling/internal/cache"
 )
 
 func TestHasReturnsTrueAfterAdd(t *testing.T) {

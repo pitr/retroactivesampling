@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"retroactivesampling/processor/buffer"
+	"retroactivesampling/processor/retroactivesampling/internal/buffer"
 )
 
 func newTestBuffer(t *testing.T) *buffer.SpanBuffer {

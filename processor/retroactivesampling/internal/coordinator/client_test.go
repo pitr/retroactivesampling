@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	gen "retroactivesampling/gen"
-	coord "retroactivesampling/processor/coordinator"
+	coord "retroactivesampling/processor/retroactivesampling/internal/coordinator"
 )
 
 // fakeServer records notifications and allows broadcasting decisions.

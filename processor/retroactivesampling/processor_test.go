@@ -20,8 +20,8 @@ import (
 	"google.golang.org/grpc"
 
 	gen "retroactivesampling/gen"
-	"retroactivesampling/processor"
-	"retroactivesampling/processor/evaluator"
+	processor "retroactivesampling/processor/retroactivesampling"
+	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 // fakeCoordinator records notifications and allows triggering decisions.

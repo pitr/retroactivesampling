@@ -8,11 +8,15 @@ build: $(COORDINATOR_BIN)
 $(COORDINATOR_BIN):
 	go build -o $(COORDINATOR_BIN) ./coordinator/
 
+PROCESSOR_DIR := processor/retroactivesampling
+
 test:
 	go test ./... -timeout 30s
+	cd $(PROCESSOR_DIR) && go test ./... -timeout 30s
 
 test-integration:
 	go test -tags integration ./... -timeout 120s
+	cd $(PROCESSOR_DIR) && go test -tags integration ./... -timeout 120s
 
 proto:
 	protoc --go_out=gen --go_opt=paths=source_relative \

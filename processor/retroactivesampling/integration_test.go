@@ -24,8 +24,8 @@ import (
 	gen "retroactivesampling/gen"
 	rds "retroactivesampling/coordinator/redis"
 	coordserver "retroactivesampling/coordinator/server"
-	proc "retroactivesampling/processor"
-	"retroactivesampling/processor/evaluator"
+	proc "retroactivesampling/processor/retroactivesampling"
+	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 func startRedis(t *testing.T) string {
