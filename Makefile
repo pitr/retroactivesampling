@@ -9,12 +9,12 @@ $(COORDINATOR_BIN):
 	go -C coordinator build -o ../$(COORDINATOR_BIN) .
 
 test:
-	go test ./... -timeout 30s
+	go -C proto test ./... -timeout 30s
 	go -C coordinator test ./... -timeout 30s
 	go -C processor/retroactivesampling test ./... -timeout 30s
 
 test-integration:
-	go test -tags integration ./... -timeout 120s
+	go -C proto test -tags integration ./... -timeout 120s
 	go -C coordinator test -tags integration ./... -timeout 120s
 	go -C processor/retroactivesampling test -tags integration ./... -timeout 120s
 

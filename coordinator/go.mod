@@ -8,7 +8,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.42.0
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
-	retroactivesampling v0.0.0
+	retroactivesampling/proto v0.0.0
 )
 
 require (
@@ -68,4 +68,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace retroactivesampling v0.0.0 => ../

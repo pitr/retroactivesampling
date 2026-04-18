@@ -1,9 +1,9 @@
 go 1.25.6
 
 use (
-	.
+	./proto
 	./coordinator
 	./processor/retroactivesampling
 )
 
-replace retroactivesampling v0.0.0 => ./
+replace retroactivesampling/proto v0.0.0 => ./proto

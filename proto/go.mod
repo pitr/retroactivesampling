@@ -1,4 +1,4 @@
-module retroactivesampling
+module retroactivesampling/proto
 
 go 1.25.6
 
