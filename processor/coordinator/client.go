@@ -45,6 +45,11 @@ func (c *Client) Close() { c.cancel() }
 func (c *Client) run() {
 	backoff := time.Second
 	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+		}
 		if err := c.connect(); err != nil {
 			select {
 			case <-c.ctx.Done():
