@@ -3,7 +3,7 @@ package processor
 import (
 	"time"
 
-	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 type Config struct {

@@ -12,7 +12,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	rds "retroactivesampling/coordinator/redis"
+	rds "pitr.ca/retroactivesampling/coordinator/redis"
 )
 
 func startRedis(t *testing.T) string {

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 func TestLatencyEvaluator_AboveThreshold(t *testing.T) {

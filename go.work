@@ -6,4 +6,4 @@ use (
 	./processor/retroactivesampling
 )
 
-replace retroactivesampling/proto v0.0.0 => ./proto
+replace pitr.ca/retroactivesampling/proto v0.0.0 => ./proto

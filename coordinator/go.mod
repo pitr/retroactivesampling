@@ -1,4 +1,4 @@
-module retroactivesampling/coordinator
+module pitr.ca/retroactivesampling/coordinator
 
 go 1.25.6
 
@@ -8,7 +8,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.42.0
 	google.golang.org/grpc v1.80.0
 	gopkg.in/yaml.v3 v3.0.1
-	retroactivesampling/proto v0.0.0
+	pitr.ca/retroactivesampling/proto v0.0.0
 )
 
 require (

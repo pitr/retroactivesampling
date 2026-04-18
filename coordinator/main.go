@@ -12,9 +12,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/proto"
-	rds "retroactivesampling/coordinator/redis"
-	"retroactivesampling/coordinator/server"
+	gen "pitr.ca/retroactivesampling/proto"
+	rds "pitr.ca/retroactivesampling/coordinator/redis"
+	"pitr.ca/retroactivesampling/coordinator/server"
 )
 
 func main() {

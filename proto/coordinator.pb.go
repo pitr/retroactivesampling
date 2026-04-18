@@ -4,7 +4,7 @@
 // 	protoc        v7.34.1
 // source: coordinator.proto
 
-package gen
+package proto
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -266,7 +266,7 @@ const file_coordinator_proto_rawDesc = "" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x12\n" +
 	"\x04keep\x18\x02 \x01(\bR\x04keep2\\\n" +
 	"\vCoordinator\x12M\n" +
-	"\aConnect\x12\x1d.coordinator.ProcessorMessage\x1a\x1f.coordinator.CoordinatorMessage(\x010\x01B\x19Z\x17retroactivesampling/genb\x06proto3"
+	"\aConnect\x12\x1d.coordinator.ProcessorMessage\x1a\x1f.coordinator.CoordinatorMessage(\x010\x01B#Z!pitr.ca/retroactivesampling/protob\x06proto3"
 
 var (
 	file_coordinator_proto_rawDescOnce sync.Once

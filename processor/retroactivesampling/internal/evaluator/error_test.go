@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 func makeTraces(statusCode ptrace.StatusCode, durationMs int64) ptrace.Traces {

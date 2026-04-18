@@ -1,6 +1,6 @@
 syntax = "proto3";
 package coordinator;
-option go_package = "retroactivesampling/gen";
+option go_package = "pitr.ca/retroactivesampling/proto";
 
 service Coordinator {
   rpc Connect(stream ProcessorMessage) returns (stream CoordinatorMessage);

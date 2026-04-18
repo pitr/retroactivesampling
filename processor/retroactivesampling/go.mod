@@ -1,4 +1,4 @@
-module retroactivesampling/processor/retroactivesampling
+module pitr.ca/retroactivesampling/processor/retroactivesampling
 
 go 1.25.6
 
@@ -14,7 +14,7 @@ require (
 	go.opentelemetry.io/collector/processor/processortest v0.150.0
 	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.80.0
-	retroactivesampling/proto v0.0.0
+	pitr.ca/retroactivesampling/proto v0.0.0
 )
 
 require (

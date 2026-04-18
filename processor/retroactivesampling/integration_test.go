@@ -21,11 +21,11 @@ import (
 	"google.golang.org/grpc"
 	otelprocessor "go.opentelemetry.io/collector/processor"
 
-	gen "retroactivesampling/proto"
-	rds "retroactivesampling/coordinator/redis"
-	coordserver "retroactivesampling/coordinator/server"
-	proc "retroactivesampling/processor/retroactivesampling"
-	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	gen "pitr.ca/retroactivesampling/proto"
+	rds "pitr.ca/retroactivesampling/coordinator/redis"
+	coordserver "pitr.ca/retroactivesampling/coordinator/server"
+	proc "pitr.ca/retroactivesampling/processor/retroactivesampling"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 func startRedis(t *testing.T) string {

@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	gen "retroactivesampling/proto"
-	"retroactivesampling/coordinator/server"
+	gen "pitr.ca/retroactivesampling/proto"
+	"pitr.ca/retroactivesampling/coordinator/server"
 )
 
 func startServer(t *testing.T, s *server.Server) string {

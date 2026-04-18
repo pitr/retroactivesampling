@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	gen "retroactivesampling/proto"
+	gen "pitr.ca/retroactivesampling/proto"
 )
 
 type DecisionHandler func(traceID string, keep bool)

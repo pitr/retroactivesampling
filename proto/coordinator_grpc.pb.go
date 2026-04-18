@@ -4,7 +4,7 @@
 // - protoc             v7.34.1
 // source: coordinator.proto
 
-package gen
+package proto
 
 import (
 	context "context"

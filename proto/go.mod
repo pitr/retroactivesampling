@@ -1,4 +1,4 @@
-module retroactivesampling/proto
+module pitr.ca/retroactivesampling/proto
 
 go 1.25.6
 

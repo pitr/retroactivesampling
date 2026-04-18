@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	gen "retroactivesampling/proto"
+	gen "pitr.ca/retroactivesampling/proto"
 )
 
 type Server struct {

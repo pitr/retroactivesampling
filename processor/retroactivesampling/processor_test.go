@@ -19,9 +19,9 @@ import (
 	"go.opentelemetry.io/collector/processor/processortest"
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/proto"
-	processor "retroactivesampling/processor/retroactivesampling"
-	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	gen "pitr.ca/retroactivesampling/proto"
+	processor "pitr.ca/retroactivesampling/processor/retroactivesampling"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
 // fakeCoordinator records notifications and allows triggering decisions.

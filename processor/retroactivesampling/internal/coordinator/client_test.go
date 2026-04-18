@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/proto"
-	coord "retroactivesampling/processor/retroactivesampling/internal/coordinator"
+	gen "pitr.ca/retroactivesampling/proto"
+	coord "pitr.ca/retroactivesampling/processor/retroactivesampling/internal/coordinator"
 )
 
 // fakeServer records notifications and allows broadcasting decisions.
