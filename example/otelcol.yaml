@@ -1,0 +1,34 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  retroactive_sampling:
+    buffer_db_path: /var/otelcol/retrosampling.db
+    buffer_ttl: 10s
+    drop_ttl: 30s
+    interest_cache_ttl: 60s
+    coordinator_endpoint: coordinator:9090
+    rules:
+      - type: error_status
+      - type: high_latency
+        threshold: 5s
+
+exporters:
+  otlp:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [retroactive_sampling]
+      exporters: [otlp, debug]

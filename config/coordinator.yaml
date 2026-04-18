@@ -1,3 +1,0 @@
-grpc_listen: :9090
-redis_addr: redis:6379
-decided_key_ttl: 60s

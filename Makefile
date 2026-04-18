@@ -19,10 +19,10 @@ proto:
 	       --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	       -I proto proto/coordinator.proto
 
-collector: ocb.yaml
-	ocb --config ocb.yaml
+collector: example/build.yaml
+	ocb --config example/build.yaml
 
 clean:
-	rm -rf $(COORDINATOR_BIN) $(COLLECTOR_BIN)
+	rm -rf bin/
 
 .DEFAULT_GOAL := build

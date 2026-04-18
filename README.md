@@ -20,7 +20,7 @@ make build
 
 ### Configure
 
-Edit `config/coordinator.yaml`:
+Edit `example/coordinator.yaml`:
 
 ```yaml
 grpc_listen: :9090        # gRPC listen address for processor connections
@@ -31,7 +31,7 @@ decided_key_ttl: 60s      # dedup key TTL — must exceed your trace lifetime
 ### Run
 
 ```bash
-bin/coordinator --config config/coordinator.yaml
+bin/coordinator --config example/coordinator.yaml
 ```
 
 For HA, run multiple instances behind any load balancer (standard round-robin). Each instance subscribes to the same Redis channel and broadcasts to its own connected processors.
@@ -54,7 +54,7 @@ make collector
 ## Running the collector
 
 ```bash
-bin/otelcol-retrosampling --config config/otelcol.yaml
+bin/otelcol-retrosampling --config example/otelcol.yaml
 ```
 
 Processor config options:
