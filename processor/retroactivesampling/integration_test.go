@@ -7,13 +7,12 @@ import (
 	"encoding/hex"
 	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -22,54 +21,52 @@ import (
 	otelprocessor "go.opentelemetry.io/collector/processor"
 
 	gen "pitr.ca/retroactivesampling/proto"
-	rds "pitr.ca/retroactivesampling/coordinator/redis"
-	coordserver "pitr.ca/retroactivesampling/coordinator/server"
 	proc "pitr.ca/retroactivesampling/processor/retroactivesampling"
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
-func startRedis(t *testing.T) string {
-	t.Helper()
-	ctx := context.Background()
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "redis:7-alpine",
-			ExposedPorts: []string{"6379/tcp"},
-			WaitingFor:   wait.ForLog("Ready to accept connections"),
-		},
-		Started: true,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = c.Terminate(ctx) })
-	host, err := c.Host(ctx)
-	require.NoError(t, err)
-	port, err := c.MappedPort(ctx, "6379")
-	require.NoError(t, err)
-	return host + ":" + port.Port()
+// stubCoordinator is a minimal in-process gRPC coordinator: broadcasts keep
+// decisions to all connected processors when any one notifies an interesting trace.
+type stubCoordinator struct {
+	gen.UnimplementedCoordinatorServer
+	mu      sync.Mutex
+	streams []gen.Coordinator_ConnectServer
 }
 
-func startCoordinator(t *testing.T, redisAddr string) string {
-	t.Helper()
-	ps := rds.New(redisAddr, 60*time.Second)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(func() { cancel(); _ = ps.Close() })
-
-	srv := coordserver.New(func(traceID string) {
-		ok, err := ps.Publish(ctx, traceID)
-		if err != nil || !ok {
-			return
+func (s *stubCoordinator) Connect(stream gen.Coordinator_ConnectServer) error {
+	s.mu.Lock()
+	s.streams = append(s.streams, stream)
+	s.mu.Unlock()
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			return err
 		}
-	})
-	go func() {
-		_ = ps.Subscribe(ctx, func(traceID string) {
-			srv.Broadcast(traceID, true)
-		})
-	}()
+		if n := msg.GetNotify(); n != nil {
+			s.broadcast(n.TraceId)
+		}
+	}
+}
 
+func (s *stubCoordinator) broadcast(traceID string) {
+	decision := &gen.CoordinatorMessage{
+		Payload: &gen.CoordinatorMessage_Decision{
+			Decision: &gen.TraceDecision{TraceId: traceID, Keep: true},
+		},
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, stream := range s.streams {
+		_ = stream.Send(decision)
+	}
+}
+
+func startCoordinator(t *testing.T) string {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	gs := grpc.NewServer()
-	gen.RegisterCoordinatorServer(gs, srv)
+	gen.RegisterCoordinatorServer(gs, &stubCoordinator{})
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return lis.Addr().String()
@@ -120,26 +117,22 @@ func spanWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Traces {
 // TestE2E_ErrorPropagatesAcrossTwoProcessors: Processor A sees error span → ingests + notifies coordinator →
 // coordinator broadcasts → Processor B (holding non-interesting spans of same trace) ingests them.
 func TestE2E_ErrorPropagatesAcrossTwoProcessors(t *testing.T) {
-	redisAddr := startRedis(t)
-	coordAddr := startCoordinator(t, redisAddr)
+	coordAddr := startCoordinator(t)
 
 	sinkA := &consumertest.TracesSink{}
 	sinkB := &consumertest.TracesSink{}
 	procA := newTestProcessor(t, coordAddr, sinkA)
 	procB := newTestProcessor(t, coordAddr, sinkB)
 
-	// Use a valid 32-char hex trace ID
 	traceIDHex := "aabbccddeeff00112233445566778899"
 
-	// Processor B buffers non-interesting span for the trace
 	require.NoError(t, procB.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeOk)))
 
 	time.Sleep(300 * time.Millisecond) // B evaluates: not interesting, holds in buffer
 
-	// Processor A sees error span for same trace
 	require.NoError(t, procA.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeError)))
 
-	// Budget: A buffer_ttl(200ms) + Redis roundtrip + gRPC broadcast + B onDecision; 1s gives margin on slow CI.
+	// Budget: A buffer_ttl(200ms) + gRPC broadcast + B onDecision; 1s gives margin on slow CI.
 	time.Sleep(1000 * time.Millisecond)
 
 	assert.Equal(t, 1, sinkA.SpanCount(), "processor A should ingest its error span")

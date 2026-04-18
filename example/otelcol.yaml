@@ -8,7 +8,7 @@ receivers:
 
 processors:
   retroactive_sampling:
-    buffer_db_path: /var/otelcol/retrosampling.db
+    buffer_db_path: ./retrosampling.db
     buffer_ttl: 10s
     drop_ttl: 30s
     interest_cache_ttl: 60s
@@ -19,10 +19,6 @@ processors:
         threshold: 5s
 
 exporters:
-  otlp:
-    endpoint: jaeger:4317
-    tls:
-      insecure: true
   debug:
     verbosity: basic
 
@@ -31,4 +27,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [retroactive_sampling]
-      exporters: [otlp, debug]
+      exporters: [debug]
