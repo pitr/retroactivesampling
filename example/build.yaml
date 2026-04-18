@@ -17,4 +17,5 @@ exporters:
   - gomod: go.opentelemetry.io/collector/exporter/otlpexporter v0.150.0
 
 replaces:
-  - retroactivesampling/processor/retroactivesampling => ./processor/retroactivesampling
+  - retroactivesampling/processor/retroactivesampling => ../processor/retroactivesampling
+  - retroactivesampling/proto => ../proto
