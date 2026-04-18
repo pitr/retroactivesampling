@@ -41,8 +41,10 @@ func startRedis(t *testing.T) string {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Terminate(ctx) })
-	host, _ := c.Host(ctx)
-	port, _ := c.MappedPort(ctx, "6379")
+	host, err := c.Host(ctx)
+	require.NoError(t, err)
+	port, err := c.MappedPort(ctx, "6379")
+	require.NoError(t, err)
 	return host + ":" + port.Port()
 }
 
@@ -137,7 +139,8 @@ func TestE2E_ErrorPropagatesAcrossTwoProcessors(t *testing.T) {
 	// Processor A sees error span for same trace
 	require.NoError(t, procA.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeError)))
 
-	time.Sleep(700 * time.Millisecond) // A evaluates → interesting → notifies coordinator → B ingests
+	// Budget: A buffer_ttl(200ms) + Redis roundtrip + gRPC broadcast + B onDecision; 1s gives margin on slow CI.
+	time.Sleep(1000 * time.Millisecond)
 
 	assert.Equal(t, 1, sinkA.SpanCount(), "processor A should ingest its error span")
 	assert.Equal(t, 1, sinkB.SpanCount(), "processor B should ingest its buffered span after coordinator push")
