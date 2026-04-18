@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	gen "retroactivesampling/gen"
+	gen "retroactivesampling/proto"
 	"retroactivesampling/coordinator/server"
 )
 

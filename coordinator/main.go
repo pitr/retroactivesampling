@@ -12,7 +12,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/gen"
+	gen "retroactivesampling/proto"
 	rds "retroactivesampling/coordinator/redis"
 	"retroactivesampling/coordinator/server"
 )

@@ -19,8 +19,8 @@ test-integration:
 	go -C processor/retroactivesampling test -tags integration ./... -timeout 120s
 
 proto:
-	protoc --go_out=gen --go_opt=paths=source_relative \
-	       --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
+	protoc --go_out=proto --go_opt=paths=source_relative \
+	       --go-grpc_out=proto --go-grpc_opt=paths=source_relative \
 	       -I proto proto/coordinator.proto
 
 collector: example/build.yaml

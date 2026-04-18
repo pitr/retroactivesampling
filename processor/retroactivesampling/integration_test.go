@@ -21,7 +21,7 @@ import (
 	"google.golang.org/grpc"
 	otelprocessor "go.opentelemetry.io/collector/processor"
 
-	gen "retroactivesampling/gen"
+	gen "retroactivesampling/proto"
 	rds "retroactivesampling/coordinator/redis"
 	coordserver "retroactivesampling/coordinator/server"
 	proc "retroactivesampling/processor/retroactivesampling"

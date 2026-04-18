@@ -19,7 +19,7 @@ import (
 	"go.opentelemetry.io/collector/processor/processortest"
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/gen"
+	gen "retroactivesampling/proto"
 	processor "retroactivesampling/processor/retroactivesampling"
 	"retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )

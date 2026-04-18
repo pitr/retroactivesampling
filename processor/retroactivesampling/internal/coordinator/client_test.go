@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	gen "retroactivesampling/gen"
+	gen "retroactivesampling/proto"
 	coord "retroactivesampling/processor/retroactivesampling/internal/coordinator"
 )
 
