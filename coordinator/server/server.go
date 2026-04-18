@@ -55,8 +55,8 @@ func (s *Server) Broadcast(traceID string, keep bool) {
 			Decision: &gen.TraceDecision{TraceId: traceID, Keep: keep},
 		},
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, stream := range s.streams {
 		_ = stream.Send(msg)
 	}

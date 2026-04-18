@@ -53,7 +53,7 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 		t.Fatal("timed out waiting for notification")
 	}
 
-	// Coordinator broadcasts back
+	// notified channel receipt proves the stream is registered — Broadcast will reach it.
 	srv.Broadcast("trace-1", true)
 
 	msg, err := stream.Recv()
