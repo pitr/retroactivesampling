@@ -25,7 +25,10 @@ func New(addr string, ttl time.Duration) *PubSub {
 	}
 }
 
-// Publish publishes traceID if not already seen (SET NX). Returns true if newly published.
+// Publish publishes traceID if not already seen (SET NX + PUBLISH). Returns true if newly published.
+// Note: SET NX and PUBLISH are not atomic. A coordinator crash between the two operations
+// causes silent trace loss — the NX key blocks retries but no broadcast is sent.
+// For this system's best-effort semantics this is acceptable.
 func (p *PubSub) Publish(ctx context.Context, traceID string) (bool, error) {
 	key := fmt.Sprintf(decidedKeyFmt, traceID)
 	ok, err := p.client.SetNX(ctx, key, 1, p.ttl).Result()
@@ -42,7 +45,9 @@ func (p *PubSub) Subscribe(ctx context.Context, handler func(traceID string)) er
 	for {
 		select {
 		case msg := <-sub.Channel():
-			handler(msg.Payload)
+			if msg != nil {
+				handler(msg.Payload)
+			}
 		case <-ctx.Done():
 			return nil
 		}
