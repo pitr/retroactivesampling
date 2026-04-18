@@ -58,6 +58,18 @@ func (p *retroactiveProcessor) Start(_ context.Context, _ component.Host) error 
 
 func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 	p.coord.Close()
+
+	p.mu.Lock()
+	for _, t := range p.timers {
+		t.Stop()
+	}
+	p.timers = make(map[string]*time.Timer)
+	for _, t := range p.drops {
+		t.Stop()
+	}
+	p.drops = make(map[string]*time.Timer)
+	p.mu.Unlock()
+
 	return p.buf.Close()
 }
 
@@ -89,11 +101,12 @@ func (p *retroactiveProcessor) resetBufferTimer(traceID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if t, ok := p.timers[traceID]; ok {
+		// AfterFunc timers have no channel to drain; Reset is safe to call even if the
+		// callback is mid-flight (unlike channel-based timers which require draining).
 		t.Reset(p.cfg.BufferTTL)
 		return
 	}
-	id := traceID
-	p.timers[id] = time.AfterFunc(p.cfg.BufferTTL, func() { p.onBufferTimeout(id) })
+	p.timers[traceID] = time.AfterFunc(p.cfg.BufferTTL, func() { p.onBufferTimeout(traceID) })
 }
 
 func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
@@ -106,8 +119,10 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 		return
 	}
 	if p.eval.Evaluate(traces) {
-		_ = p.next.ConsumeTraces(context.Background(), traces)
-		_ = p.buf.Delete(traceID)
+		_ = p.buf.Delete(traceID)   // delete first — prevents onDecision from double-ingesting
+		if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
+			p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
+		}
 		p.ic.Add(traceID)
 		p.coord.Notify(traceID)
 		return
@@ -143,6 +158,8 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	if err != nil || !ok {
 		return
 	}
-	_ = p.next.ConsumeTraces(context.Background(), traces)
+	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
+		p.logger.Error("ingest coordinator-decided trace", zap.String("trace_id", traceID), zap.Error(err))
+	}
 	_ = p.buf.Delete(traceID)
 }
