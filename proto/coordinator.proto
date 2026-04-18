@@ -1,0 +1,28 @@
+syntax = "proto3";
+package coordinator;
+option go_package = "retroactivesampling/gen";
+
+service Coordinator {
+  rpc Connect(stream ProcessorMessage) returns (stream CoordinatorMessage);
+}
+
+message ProcessorMessage {
+  oneof payload {
+    NotifyInteresting notify = 1;
+  }
+}
+
+message CoordinatorMessage {
+  oneof payload {
+    TraceDecision decision = 1;
+  }
+}
+
+message NotifyInteresting {
+  string trace_id = 1;
+}
+
+message TraceDecision {
+  string trace_id = 1;
+  bool keep = 2;
+}
