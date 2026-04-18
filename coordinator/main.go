@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -25,6 +26,16 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	if cfg.GRPCListen == "" {
+		log.Fatal("grpc_listen is required")
+	}
+	if cfg.RedisAddr == "" {
+		log.Fatal("redis_addr is required")
+	}
+	if cfg.DecidedKeyTTL == 0 {
+		log.Fatal("decided_key_ttl is required")
+	}
+
 	ps := rds.New(cfg.RedisAddr, cfg.DecidedKeyTTL)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -32,7 +43,7 @@ func main() {
 	srv := server.New(func(traceID string) {
 		ok, err := ps.Publish(ctx, traceID)
 		if err != nil {
-			log.Printf("publish error: %v", err)
+			log.Printf("publish %s: %v", traceID, err)
 			return
 		}
 		if !ok {
@@ -40,11 +51,16 @@ func main() {
 		}
 	})
 
-	// Subscribe to Redis; broadcast decisions from other coordinator instances
+	// All coordinators (including this one) subscribe to the Redis channel.
+	// When this instance publishes a trace ID, it arrives back via Subscribe
+	// and is broadcast to all connected processors here — this ensures a single
+	// code path handles all decisions regardless of which instance originated them.
 	go func() {
-		_ = ps.Subscribe(ctx, func(traceID string) {
+		if err := ps.Subscribe(ctx, func(traceID string) {
 			srv.Broadcast(traceID, true)
-		})
+		}); err != nil {
+			log.Printf("redis subscribe error: %v", err)
+		}
 	}()
 
 	lis, err := net.Listen("tcp", cfg.GRPCListen)
@@ -56,7 +72,18 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		gs.GracefulStop()
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopCancel()
+		done := make(chan struct{})
+		go func() {
+			gs.GracefulStop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-stopCtx.Done():
+			gs.Stop()
+		}
 		_ = ps.Close()
 	}()
 
