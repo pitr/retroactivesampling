@@ -11,7 +11,7 @@ import (
 
 type Server struct {
 	gen.UnimplementedCoordinatorServer
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	streams  map[string]gen.Coordinator_ConnectServer
 	onNotify func(traceID string)
 }
