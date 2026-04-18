@@ -18,4 +18,3 @@ exporters:
 
 replaces:
   - retroactivesampling/processor/retroactivesampling => ./processor/retroactivesampling
-  - retroactivesampling => ./
