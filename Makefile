@@ -24,7 +24,7 @@ proto:
 	       -I proto proto/coordinator.proto
 
 collector: example/build.yaml
-	ocb --config example/build.yaml
+	GOWORK=off builder --config example/build.yaml
 
 clean:
 	rm -rf bin/
