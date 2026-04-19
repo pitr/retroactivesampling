@@ -8,12 +8,14 @@ processors:
   - import: pitr.ca/retroactivesampling/processor/retroactivesampling
     gomod: pitr.ca/retroactivesampling/processor/retroactivesampling v0.0.0
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.150.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/processor/tailsamplingprocessor v0.150.0
 
 receivers:
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.150.0
 
 exporters:
   - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.150.0
+  - gomod: go.opentelemetry.io/collector/exporter/nopexporter v0.150.0
 
 replaces:
   - pitr.ca/retroactivesampling/processor/retroactivesampling => ../processor/retroactivesampling
