@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
@@ -54,8 +53,6 @@ func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retro
 	return p, nil
 }
 
-func (p *retroactiveProcessor) Start(_ context.Context, _ component.Host) error { return nil }
-
 func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 	p.coord.Close()
 
@@ -73,28 +70,21 @@ func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 	return p.buf.Close()
 }
 
-func (p *retroactiveProcessor) Capabilities() consumer.Capabilities {
-	return consumer.Capabilities{MutatesData: false}
-}
-
-func (p *retroactiveProcessor) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
+func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces) (ptrace.Traces, error) {
+	out := ptrace.NewTraces()
 	for traceID, spans := range groupByTrace(td) {
 		if p.ic.Has(traceID) {
-			if err := p.next.ConsumeTraces(ctx, spans); err != nil {
-				return err
-			}
+			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
 		if err := p.buf.WriteWithEviction(traceID, spans, time.Now()); err != nil {
 			p.logger.Error("buffer full after eviction", zap.String("trace_id", traceID), zap.Error(err))
-			if err2 := p.next.ConsumeTraces(ctx, spans); err2 != nil {
-				return err2
-			}
+			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
 		p.resetBufferTimer(traceID)
 	}
-	return nil
+	return out, nil
 }
 
 func (p *retroactiveProcessor) resetBufferTimer(traceID string) {

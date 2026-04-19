@@ -7,6 +7,7 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	otelprocessor "go.opentelemetry.io/collector/processor"
+	"go.opentelemetry.io/collector/processor/processorhelper"
 )
 
 const typeStr = "retroactive_sampling"
@@ -33,5 +34,12 @@ func createTracesProcessor(
 	cfg component.Config,
 	next consumer.Traces,
 ) (otelprocessor.Traces, error) {
-	return newProcessor(set.Logger, cfg.(*Config), next)
+	p, err := newProcessor(set.Logger, cfg.(*Config), next)
+	if err != nil {
+		return nil, err
+	}
+	return processorhelper.NewTraces(ctx, set, cfg, next, p.processTraces,
+		processorhelper.WithShutdown(p.Shutdown),
+		processorhelper.WithCapabilities(consumer.Capabilities{MutatesData: false}),
+	)
 }
