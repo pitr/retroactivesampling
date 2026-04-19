@@ -28,3 +28,6 @@ service:
       receivers: [otlp]
       processors: [retroactive_sampling]
       exporters: [debug]
+  telemetry:
+    metrics:
+      level: detailed
