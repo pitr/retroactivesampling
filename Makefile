@@ -2,11 +2,18 @@
 
 COORDINATOR_BIN := bin/coordinator
 COLLECTOR_BIN   := bin/otelcol-retrosampling
+TRACEGEN_BIN    := bin/tracegen
 
-build: $(COORDINATOR_BIN)
+COORDINATOR_SRC := $(shell find coordinator -name '*.go')
+TRACEGEN_SRC    := $(shell find cmd/tracegen -name '*.go')
 
-$(COORDINATOR_BIN):
+build: $(COORDINATOR_BIN) $(TRACEGEN_BIN)
+
+$(COORDINATOR_BIN): $(COORDINATOR_SRC) coordinator/go.mod coordinator/go.sum
 	go -C coordinator build -o ../$(COORDINATOR_BIN) .
+
+$(TRACEGEN_BIN): $(TRACEGEN_SRC) cmd/tracegen/go.mod cmd/tracegen/go.sum
+	go -C cmd/tracegen build -o ../../$(TRACEGEN_BIN) .
 
 test:
 	go -C proto test ./... -timeout 30s

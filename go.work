@@ -4,6 +4,7 @@ use (
 	./proto
 	./coordinator
 	./processor/retroactivesampling
+	./cmd/tracegen
 )
 
 replace pitr.ca/retroactivesampling/proto v0.0.0 => ./proto
