@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/collector/processor/processorhelper"
 	"go.uber.org/zap"
 
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/buffer"
@@ -84,6 +85,9 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		}
 		p.resetBufferTimer(traceID)
 	}
+	if out.SpanCount() == 0 {
+		return out, processorhelper.ErrSkipProcessingData
+	}
 	return out, nil
 }
 
@@ -119,8 +123,7 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 	}
 	// Not interesting locally — start drop timer and wait for coordinator
 	p.mu.Lock()
-	id := traceID
-	p.drops[id] = time.AfterFunc(p.cfg.DropTTL, func() { p.onDropTimeout(id) })
+	p.drops[traceID] = time.AfterFunc(p.cfg.DropTTL, func() { p.onDropTimeout(traceID) })
 	p.mu.Unlock()
 }
 
@@ -139,11 +142,11 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	}
 	p.mu.Unlock()
 
-	p.ic.Add(traceID)
 	if !keep {
 		_ = p.buf.Delete(traceID)
 		return
 	}
+	p.ic.Add(traceID)
 	traces, ok, err := p.buf.Read(traceID)
 	if err != nil || !ok {
 		return
