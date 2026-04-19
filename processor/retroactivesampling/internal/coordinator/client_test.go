@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
 	gen "pitr.ca/retroactivesampling/proto"
@@ -71,7 +72,7 @@ func startFakeServer(t *testing.T) (*fakeServer, string) {
 func TestClientSendsNotification(t *testing.T) {
 	srv, addr := startFakeServer(t)
 	received := make(chan string, 1)
-	c := coord.New(addr, func(traceID string, keep bool) { received <- traceID })
+	c := coord.New(addr, func(traceID string, keep bool) { received <- traceID }, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond) // connection establishment
@@ -91,7 +92,7 @@ func TestClientReceivesDecision(t *testing.T) {
 		if keep {
 			received <- traceID
 		}
-	})
+	}, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond)

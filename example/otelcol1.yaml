@@ -3,16 +3,14 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
 
 processors:
   retroactive_sampling:
-    buffer_db_path: ./retrosampling.db
+    buffer_db_path: ./retrosampling1.db
     buffer_ttl: 10s
     drop_ttl: 30s
     interest_cache_ttl: 60s
-    coordinator_endpoint: coordinator:9090
+    coordinator_endpoint: localhost:9090
     rules:
       - type: error_status
       - type: high_latency
@@ -21,13 +19,21 @@ processors:
 exporters:
   debug:
     verbosity: basic
+  otlphttp:
+    traces_endpoint: http://localhost:10428/insert/opentelemetry/v1/traces
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [retroactive_sampling]
-      exporters: [debug]
+      exporters: [debug, otlphttp]
   telemetry:
     metrics:
       level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '0.0.0.0'
+                port: 8888

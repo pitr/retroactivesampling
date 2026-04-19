@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -18,9 +19,10 @@ type Client struct {
 	sendCh   chan string
 	ctx      context.Context
 	cancel   context.CancelFunc
+	logger   *zap.Logger
 }
 
-func New(endpoint string, handler DecisionHandler) *Client {
+func New(endpoint string, handler DecisionHandler, logger *zap.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		endpoint: endpoint,
@@ -28,6 +30,7 @@ func New(endpoint string, handler DecisionHandler) *Client {
 		sendCh:   make(chan string, 256),
 		ctx:      ctx,
 		cancel:   cancel,
+		logger:   logger,
 	}
 	go c.run()
 	return c
@@ -36,7 +39,9 @@ func New(endpoint string, handler DecisionHandler) *Client {
 func (c *Client) Notify(traceID string) {
 	select {
 	case c.sendCh <- traceID:
-	default: // drop if backpressure
+		c.logger.Debug("coordinator: queued notify", zap.String("trace_id", traceID), zap.Int("queue_len", len(c.sendCh)))
+	default:
+		c.logger.Warn("coordinator: send queue full, dropping notify", zap.String("trace_id", traceID))
 	}
 }
 
@@ -50,7 +55,9 @@ func (c *Client) run() {
 			return
 		default:
 		}
+		c.logger.Info("coordinator: connecting", zap.String("endpoint", c.endpoint))
 		if err := c.connect(); err != nil {
+			c.logger.Warn("coordinator: connection lost, retrying", zap.Error(err), zap.Duration("backoff", backoff))
 			select {
 			case <-c.ctx.Done():
 				return
@@ -60,6 +67,7 @@ func (c *Client) run() {
 				}
 			}
 		} else {
+			c.logger.Info("coordinator: connection closed cleanly")
 			backoff = time.Second
 		}
 	}
@@ -77,6 +85,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
+	c.logger.Info("coordinator: stream established", zap.String("endpoint", c.endpoint))
 
 	recvErr := make(chan error, 1)
 	go func() {
@@ -87,6 +96,7 @@ func (c *Client) connect() error {
 				return
 			}
 			if d := msg.GetDecision(); d != nil {
+				c.logger.Debug("coordinator: received decision", zap.String("trace_id", d.TraceId), zap.Bool("keep", d.Keep))
 				c.handler(d.TraceId, d.Keep)
 			}
 		}
@@ -95,14 +105,17 @@ func (c *Client) connect() error {
 	for {
 		select {
 		case traceID := <-c.sendCh:
+			c.logger.Debug("coordinator: sending notify", zap.String("trace_id", traceID))
 			if err := stream.Send(&gen.ProcessorMessage{
 				Payload: &gen.ProcessorMessage_Notify{
 					Notify: &gen.NotifyInteresting{TraceId: traceID},
 				},
 			}); err != nil {
+				c.logger.Error("coordinator: send failed", zap.String("trace_id", traceID), zap.Error(err))
 				return err
 			}
 		case err := <-recvErr:
+			c.logger.Error("coordinator: recv failed", zap.Error(err))
 			return err
 		case <-c.ctx.Done():
 			return nil

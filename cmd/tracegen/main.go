@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -19,8 +20,8 @@ import (
 )
 
 var (
-	endpoint   = flag.String("endpoint", "localhost:4317", "OTLP gRPC endpoint")
-	rate       = flag.Float64("rate", 3, "traces/sec")
+	endpoints  = flag.String("endpoints", "localhost:4317,localhost:4318", "comma separated OTLP gRPC endpoints")
+	rate       = flag.Float64("rate", 10, "traces/sec")
 	svcCount   = flag.Int("services", 10, "number of services")
 	reportFreq = flag.Int("report-rate", 10, "report frequency in seconds")
 )
@@ -41,7 +42,7 @@ func main() {
 
 	ctx := context.Background()
 	counter := &counter{}
-	tracers, providers := setup(ctx, *endpoint, *svcCount, counter)
+	tracers, providers := setup(ctx, strings.Split(*endpoints, ","), *svcCount, counter)
 	defer func() {
 		for _, tp := range providers {
 			tp.Shutdown(ctx)
@@ -62,12 +63,12 @@ func main() {
 	}
 }
 
-func setup(ctx context.Context, endpoint string, n int, counter *counter) ([]trace.Tracer, []*sdktrace.TracerProvider) {
+func setup(ctx context.Context, endpoints []string, n int, counter *counter) ([]trace.Tracer, []*sdktrace.TracerProvider) {
 	tracers := make([]trace.Tracer, n)
 	providers := make([]*sdktrace.TracerProvider, n)
 	for i := range n {
 		exp, _ := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(endpoint),
+			otlptracegrpc.WithEndpoint(endpoints[i%len(endpoints)]),
 			otlptracegrpc.WithInsecure(),
 			otlptracegrpc.WithDialOption(grpc.WithStatsHandler(counter)))
 		res, _ := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))

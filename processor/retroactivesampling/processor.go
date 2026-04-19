@@ -50,7 +50,7 @@ func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retro
 		timers: make(map[string]*time.Timer),
 		drops:  make(map[string]*time.Timer),
 	}
-	p.coord = coord.New(cfg.CoordinatorEndpoint, p.onDecision)
+	p.coord = coord.New(cfg.CoordinatorEndpoint, p.onDecision, logger)
 	return p, nil
 }
 
@@ -113,6 +113,7 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 		return
 	}
 	if p.eval.Evaluate(traces) {
+		p.logger.Debug("buffer timeout: locally interesting, notifying coordinator", zap.String("trace_id", traceID))
 		_ = p.buf.Delete(traceID)   // delete first — prevents onDecision from double-ingesting
 		if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
 			p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
@@ -122,6 +123,7 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 		return
 	}
 	// Not interesting locally — start drop timer and wait for coordinator
+	p.logger.Debug("buffer timeout: not locally interesting, waiting for coordinator decision", zap.String("trace_id", traceID), zap.Duration("drop_ttl", p.cfg.DropTTL))
 	p.mu.Lock()
 	p.drops[traceID] = time.AfterFunc(p.cfg.DropTTL, func() { p.onDropTimeout(traceID) })
 	p.mu.Unlock()
@@ -135,12 +137,18 @@ func (p *retroactiveProcessor) onDropTimeout(traceID string) {
 }
 
 func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
+	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID), zap.Bool("keep", keep))
 	p.mu.Lock()
+	_, hadDropTimer := p.drops[traceID]
 	if t, ok := p.drops[traceID]; ok {
 		t.Stop()
 		delete(p.drops, traceID)
 	}
 	p.mu.Unlock()
+
+	if !hadDropTimer {
+		p.logger.Warn("coordinator decision for unknown/already-expired trace", zap.String("trace_id", traceID), zap.Bool("keep", keep))
+	}
 
 	if !keep {
 		_ = p.buf.Delete(traceID)
@@ -149,6 +157,7 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	p.ic.Add(traceID)
 	traces, ok, err := p.buf.Read(traceID)
 	if err != nil || !ok {
+		p.logger.Warn("coordinator said keep but trace not in buffer", zap.String("trace_id", traceID), zap.Bool("found", ok), zap.Error(err))
 		return
 	}
 	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
