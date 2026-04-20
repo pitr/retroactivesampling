@@ -153,6 +153,42 @@ func TestWrap(t *testing.T) {
 	assert.Equal(t, 1, got.SpanCount())
 }
 
+func TestDelete(t *testing.T) {
+	buf := newBuf(t)
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+
+	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
+	require.NoError(t, buf.Delete(traceA))
+
+	_, ok, err := buf.Read(traceA)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestDeleteNonExistent(t *testing.T) {
+	buf := newBuf(t)
+	assert.NoError(t, buf.Delete(traceA))
+}
+
+func TestDeleteOrphanSweptOnNextWrite(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	buf := newBufSize(t, rs)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.Delete(traceA))
+
+	// Ring used=rs. Writing traceB triggers sweep of orphaned traceA record.
+	// sweepOneLocked sees traceA in ring but not in entries — just advances rHead.
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+
+	_, ok, _ := buf.Read(traceA)
+	assert.False(t, ok)
+	_, ok, _ = buf.Read(traceB)
+	assert.True(t, ok)
+}
+
 func TestWrapWithSkipRecord(t *testing.T) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 	rs := recSize(t, tr)

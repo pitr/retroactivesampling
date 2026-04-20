@@ -207,6 +207,9 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 }
 
 func (b *SpanBuffer) Delete(traceID string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.entries, traceID)
 	return nil
 }
 
