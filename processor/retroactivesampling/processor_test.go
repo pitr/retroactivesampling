@@ -130,7 +130,6 @@ func TestInterestingTraceIngestedImmediately(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "coordinator should be notified of interesting trace")
 }
 
-
 func TestCoordinatorPushCausesIngestion(t *testing.T) {
 	fc, addr := startFakeCoordinator(t)
 	sink := &consumertest.TracesSink{}
