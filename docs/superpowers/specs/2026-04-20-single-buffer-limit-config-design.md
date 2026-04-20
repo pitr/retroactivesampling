@@ -57,6 +57,12 @@ func (c *InterestCache) Delete(traceID string)     // explicit removal
 
 `Has` updates LRU position so actively-used traces are not evicted. `Delete` enables the buffer eviction callback to remove the evicted trace from IC immediately.
 
+### Factory (`factory.go`)
+
+- Remove `DropTTL: 30 * time.Second` from `createDefaultConfig`.
+- Add `MaxInterestCacheEntries: 100_000` to `createDefaultConfig`.
+- Pass `set` (full `otelprocessor.Settings`) to `newProcessor` instead of just `set.Logger`.
+
 ### Processor (`processor.go`)
 
 **Removed:**
