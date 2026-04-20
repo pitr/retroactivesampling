@@ -168,7 +168,7 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	p.ic.Add(traceID)
 	traces, ok, err := p.buf.Read(traceID)
 	if err != nil {
-		p.logger.Warn("coordinator said keep but got error fetching it", zap.String("trace_id", traceID), zap.Bool("found", ok), zap.Error(err))
+		p.logger.Warn("coordinator said keep but got error fetching it", zap.String("trace_id", traceID), zap.Error(err))
 		return
 	}
 	if !ok {
