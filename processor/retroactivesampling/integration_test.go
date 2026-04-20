@@ -126,8 +126,7 @@ func TestE2E_ErrorPropagatesAcrossTwoProcessors(t *testing.T) {
 	require.NoError(t, procA.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeError)))
 	assert.Equal(t, 1, sinkA.SpanCount(), "processor A should ingest its error span immediately")
 
-	// Budget for gRPC broadcast + B onDecision: 1s gives margin on slow CI.
-	time.Sleep(1000 * time.Millisecond)
-
-	assert.Equal(t, 1, sinkB.SpanCount(), "processor B should ingest its buffered span after coordinator push")
+	require.Eventually(t, func() bool {
+		return sinkB.SpanCount() == 1
+	}, 3*time.Second, 20*time.Millisecond, "processor B should ingest its buffered span after coordinator push")
 }

@@ -167,9 +167,9 @@ func TestCoordinatorPushCausesIngestion(t *testing.T) {
 
 	// Coordinator signals: keep this trace.
 	fc.sendDecision(tid3, true)
-	time.Sleep(100 * time.Millisecond)
-
-	assert.Equal(t, 1, sink.SpanCount(), "coordinator push should trigger ingestion")
+	require.Eventually(t, func() bool {
+		return sink.SpanCount() == 1
+	}, 2*time.Second, 10*time.Millisecond, "coordinator push should trigger ingestion")
 }
 
 func TestInterestingSpanIngestedWithoutDelay(t *testing.T) {
