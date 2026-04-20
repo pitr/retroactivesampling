@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"strings"
 	"sync/atomic"
@@ -16,6 +17,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/stats"
 )
 
@@ -67,10 +70,29 @@ func setup(ctx context.Context, endpoints []string, n int, counter *counter) ([]
 	tracers := make([]trace.Tracer, n)
 	providers := make([]*sdktrace.TracerProvider, n)
 	for i := range n {
-		exp, _ := otlptracegrpc.New(ctx,
+		exp, err := otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(endpoints[i%len(endpoints)]),
 			otlptracegrpc.WithInsecure(),
-			otlptracegrpc.WithDialOption(grpc.WithStatsHandler(counter)))
+			otlptracegrpc.WithDialOption(
+				grpc.WithStatsHandler(counter),
+				grpc.WithConnectParams(grpc.ConnectParams{
+					Backoff: backoff.Config{
+						BaseDelay:  500 * time.Millisecond,
+						Multiplier: 1.5,
+						Jitter:     0.1,
+						MaxDelay:   5 * time.Second,
+					},
+					MinConnectTimeout: 5 * time.Second,
+				}),
+				grpc.WithKeepaliveParams(keepalive.ClientParameters{
+					Time:                10 * time.Second,
+					Timeout:             5 * time.Second,
+					PermitWithoutStream: true,
+				}),
+			))
+		if err != nil {
+			log.Fatalf("failed to create exporter for %s: %v", endpoints[i%len(endpoints)], err)
+		}
 		res, _ := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))
 		tp := sdktrace.NewTracerProvider(
 			sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exp)),
