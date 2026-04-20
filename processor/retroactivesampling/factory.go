@@ -22,9 +22,7 @@ func NewFactory() otelprocessor.Factory {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		BufferTTL:        10 * time.Second,
-		DropTTL:          30 * time.Second,
-		InterestCacheTTL: 60 * time.Second,
+		DropTTL: 30 * time.Second,
 	}
 }
 

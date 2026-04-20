@@ -75,9 +75,7 @@ func newTestProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesS
 	t.Helper()
 	cfg := &proc.Config{
 		BufferDir:           t.TempDir(),
-		BufferTTL:           200 * time.Millisecond,
 		DropTTL:             2 * time.Second,
-		InterestCacheTTL:    10 * time.Second,
 		CoordinatorEndpoint: coordAddr,
 		Rules:               []evaluator.RuleConfig{{Type: "error_status"}},
 	}

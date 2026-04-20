@@ -94,9 +94,7 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 	t.Helper()
 	cfg := &processor.Config{
 		BufferDir:           t.TempDir(),
-		BufferTTL:           200 * time.Millisecond,
 		DropTTL:             500 * time.Millisecond,
-		InterestCacheTTL:    5 * time.Second,
 		CoordinatorEndpoint: addr,
 		Rules: []evaluator.RuleConfig{
 			{Type: "error_status"},
@@ -168,4 +166,16 @@ func TestCoordinatorPushCausesIngestion(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	assert.Equal(t, 1, sink.SpanCount(), "coordinator push should trigger ingestion")
+}
+
+func TestInterestingSpanIngestedWithoutDelay(t *testing.T) {
+	_, addr := startFakeCoordinator(t)
+	sink := &consumertest.TracesSink{}
+	p := newTestProcessor(t, addr, sink)
+
+	errTrace := makeTraceWithStatus("aabbccdd44444444aabbccdd44444444", ptrace.StatusCodeError)
+	require.NoError(t, p.ConsumeTraces(context.Background(), errTrace))
+
+	// Eager evaluation: interesting span ingested synchronously, no timer wait.
+	assert.Equal(t, 1, sink.SpanCount())
 }
