@@ -2,7 +2,6 @@ package processor
 
 import (
 	"context"
-	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -22,7 +21,7 @@ func NewFactory() otelprocessor.Factory {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		DropTTL: 30 * time.Second,
+		MaxInterestCacheEntries: 100_000,
 	}
 }
 
@@ -32,7 +31,7 @@ func createTracesProcessor(
 	cfg component.Config,
 	next consumer.Traces,
 ) (otelprocessor.Traces, error) {
-	p, err := newProcessor(set.Logger, cfg.(*Config), next)
+	p, err := newProcessor(set.TelemetrySettings, cfg.(*Config), next)
 	if err != nil {
 		return nil, err
 	}
