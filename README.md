@@ -87,6 +87,6 @@ Rules are evaluated with OR logic — any match marks the trace as interesting.
 
 ```bash
 make test                # unit tests
-make test-integration    # integration tests (requires Docker)
+make test-integration    # integration tests (requires local redis-server on PATH)
 make proto               # regenerate gRPC code from proto/coordinator.proto
 ```
