@@ -121,17 +121,13 @@ func TestInterestingTraceIngestedImmediately(t *testing.T) {
 	errTrace := makeTraceWithStatus("aabbccdd11111111aabbccdd11111111", ptrace.StatusCodeError)
 	require.NoError(t, p.ConsumeTraces(context.Background(), errTrace))
 
-	// Wait for buffer_ttl + processing
-	time.Sleep(400 * time.Millisecond)
-
 	assert.Equal(t, 1, sink.SpanCount(), "error trace should be ingested")
 
-	// Coordinator should be notified
-	time.Sleep(100 * time.Millisecond)
-	fc.mu.Lock()
-	notified := fc.notified
-	fc.mu.Unlock()
-	assert.NotEmpty(t, notified, "coordinator should be notified of interesting trace")
+	require.Eventually(t, func() bool {
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		return len(fc.notified) > 0
+	}, 2*time.Second, 10*time.Millisecond, "coordinator should be notified of interesting trace")
 }
 
 func TestNonInterestingTraceDropped(t *testing.T) {
@@ -142,10 +138,12 @@ func TestNonInterestingTraceDropped(t *testing.T) {
 	okTrace := makeTraceWithStatus("aabbccdd22222222aabbccdd22222222", ptrace.StatusCodeOk)
 	require.NoError(t, p.ConsumeTraces(context.Background(), okTrace))
 
-	// Wait for buffer_ttl + drop_ttl
-	time.Sleep(800 * time.Millisecond)
+	assert.Equal(t, 0, sink.SpanCount(), "ok span should be buffered, not ingested")
 
-	assert.Equal(t, 0, sink.SpanCount(), "non-interesting trace should be dropped")
+	// Wait for drop_ttl (500ms) to fire.
+	time.Sleep(700 * time.Millisecond)
+
+	assert.Equal(t, 0, sink.SpanCount(), "non-interesting trace should be dropped after drop_ttl")
 }
 
 func TestCoordinatorPushCausesIngestion(t *testing.T) {
@@ -157,11 +155,17 @@ func TestCoordinatorPushCausesIngestion(t *testing.T) {
 	okTrace := makeTraceWithStatus(tid3, ptrace.StatusCodeOk)
 	require.NoError(t, p.ConsumeTraces(context.Background(), okTrace))
 
-	// Wait for buffer_ttl evaluation (no ingest yet)
-	time.Sleep(300 * time.Millisecond)
+	// ok span is not interesting: buffered immediately, nothing ingested.
 	assert.Equal(t, 0, sink.SpanCount())
 
-	// Coordinator signals: keep this trace
+	// Wait for gRPC stream to establish before sending decision.
+	require.Eventually(t, func() bool {
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		return len(fc.streams) > 0
+	}, 2*time.Second, 10*time.Millisecond, "coordinator stream should connect")
+
+	// Coordinator signals: keep this trace.
 	fc.sendDecision(tid3, true)
 	time.Sleep(100 * time.Millisecond)
 
@@ -178,4 +182,24 @@ func TestInterestingSpanIngestedWithoutDelay(t *testing.T) {
 
 	// Eager evaluation: interesting span ingested synchronously, no timer wait.
 	assert.Equal(t, 1, sink.SpanCount())
+}
+
+// TestEagerEval_BufferedSpansIncludedOnInterestingBatch: a non-interesting span is buffered first;
+// a later interesting span for the same trace triggers ingestion of both.
+func TestEagerEval_BufferedSpansIncludedOnInterestingBatch(t *testing.T) {
+	_, addr := startFakeCoordinator(t)
+	sink := &consumertest.TracesSink{}
+	p := newTestProcessor(t, addr, sink)
+
+	const tid = "aabbccdd55555555aabbccdd55555555"
+
+	okTrace := makeTraceWithStatus(tid, ptrace.StatusCodeOk)
+	require.NoError(t, p.ConsumeTraces(context.Background(), okTrace))
+	assert.Equal(t, 0, sink.SpanCount(), "ok span should be buffered")
+
+	errTrace := makeTraceWithStatus(tid, ptrace.StatusCodeError)
+	require.NoError(t, p.ConsumeTraces(context.Background(), errTrace))
+
+	// Both spans (buffered ok + current error) ingested in one ConsumeTraces call.
+	assert.Equal(t, 2, sink.SpanCount(), "buffered ok span and error span must both be ingested")
 }
