@@ -1,3 +1,7 @@
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+
 receivers:
   otlp:
     protocols:
@@ -21,6 +25,7 @@ exporters:
     traces_endpoint: http://localhost:10428/insert/opentelemetry/v1/traces
 
 service:
+  extensions: [pprof]
   pipelines:
     traces:
       receivers: [otlp]

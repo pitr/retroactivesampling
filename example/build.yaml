@@ -4,6 +4,9 @@ dist:
   output_path: ./bin
   otelcol_version: "0.150.0"
 
+extensions:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/extension/pprofextension v0.150.0
+
 processors:
   - import: pitr.ca/retroactivesampling/processor/retroactivesampling
     gomod: pitr.ca/retroactivesampling/processor/retroactivesampling v0.0.0
