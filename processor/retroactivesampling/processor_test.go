@@ -93,9 +93,9 @@ func makeTraceWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Tra
 func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
 	cfg := &processor.Config{
-		BufferDir:           t.TempDir(),
-		DropTTL:             500 * time.Millisecond,
-		CoordinatorEndpoint: addr,
+		BufferDir:               t.TempDir(),
+		MaxInterestCacheEntries: 1000,
+		CoordinatorEndpoint:     addr,
 		Rules: []evaluator.RuleConfig{
 			{Type: "error_status"},
 		},
@@ -130,21 +130,6 @@ func TestInterestingTraceIngestedImmediately(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "coordinator should be notified of interesting trace")
 }
 
-func TestNonInterestingTraceDropped(t *testing.T) {
-	_, addr := startFakeCoordinator(t)
-	sink := &consumertest.TracesSink{}
-	p := newTestProcessor(t, addr, sink)
-
-	okTrace := makeTraceWithStatus("aabbccdd22222222aabbccdd22222222", ptrace.StatusCodeOk)
-	require.NoError(t, p.ConsumeTraces(context.Background(), okTrace))
-
-	assert.Equal(t, 0, sink.SpanCount(), "ok span should be buffered, not ingested")
-
-	// Wait for drop_ttl (500ms) to fire.
-	time.Sleep(700 * time.Millisecond)
-
-	assert.Equal(t, 0, sink.SpanCount(), "non-interesting trace should be dropped after drop_ttl")
-}
 
 func TestCoordinatorPushCausesIngestion(t *testing.T) {
 	fc, addr := startFakeCoordinator(t)

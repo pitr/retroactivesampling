@@ -74,10 +74,10 @@ func startCoordinator(t *testing.T) string {
 func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
 	cfg := &proc.Config{
-		BufferDir:           t.TempDir(),
-		DropTTL:             2 * time.Second,
-		CoordinatorEndpoint: coordAddr,
-		Rules:               []evaluator.RuleConfig{{Type: "error_status"}},
+		BufferDir:               t.TempDir(),
+		MaxInterestCacheEntries: 1000,
+		CoordinatorEndpoint:     coordAddr,
+		Rules:                   []evaluator.RuleConfig{{Type: "error_status"}},
 	}
 	factory := proc.NewFactory()
 	p, err := factory.CreateTraces(
