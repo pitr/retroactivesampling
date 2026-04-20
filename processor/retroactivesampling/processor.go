@@ -8,7 +8,6 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
-	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/buffer"
@@ -28,19 +27,7 @@ type retroactiveProcessor struct {
 
 func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
 	ic := cache.New(cfg.MaxInterestCacheEntries)
-	meter := set.MeterProvider.Meter("retroactive_sampling")
-	retentionHist, err := meter.Float64Histogram(
-		"retroactive_sampling.trace_retention_seconds",
-		metric.WithDescription("Time a trace spent in the buffer before eviction"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return nil, err
-	}
-	buf, err := buffer.New(cfg.BufferDir, cfg.MaxBufferBytes, func(traceID string, insertedAt time.Time) {
-		ic.Delete(traceID)
-		retentionHist.Record(context.Background(), time.Since(insertedAt).Seconds())
-	})
+	buf, err := buffer.New(cfg.BufferDir, cfg.MaxBufferBytes)
 	if err != nil {
 		return nil, err
 	}

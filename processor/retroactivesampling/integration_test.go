@@ -75,6 +75,7 @@ func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSi
 	t.Helper()
 	cfg := &proc.Config{
 		BufferDir:               t.TempDir(),
+		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     coordAddr,
 		Rules:                   []evaluator.RuleConfig{{Type: "error_status"}},

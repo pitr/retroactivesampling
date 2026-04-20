@@ -94,6 +94,7 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 	t.Helper()
 	cfg := &processor.Config{
 		BufferDir:               t.TempDir(),
+		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     addr,
 		Rules: []evaluator.RuleConfig{
