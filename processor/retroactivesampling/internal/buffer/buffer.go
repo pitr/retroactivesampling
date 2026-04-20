@@ -2,206 +2,224 @@ package buffer
 
 import (
 	"encoding/binary"
-	"fmt"
-	"strings"
-	"sync/atomic"
+	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
-	bolt "go.etcd.io/bbolt"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-var (
-	tracesBucket = []byte("traces")
-	orderBucket  = []byte("order")
-)
+type entry struct {
+	insertedAt time.Time
+	size       int64
+}
 
 type SpanBuffer struct {
-	db        *bolt.DB
-	count     atomic.Int64
-	maxTraces int64 // 0 = unlimited
+	dir      string
+	maxBytes int64
+
+	mu         sync.Mutex
+	entries    map[string]entry
+	totalBytes int64
 }
 
-func New(path string, maxTraces int64) (*SpanBuffer, error) {
-	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: time.Second})
-	if err != nil {
+func New(dir string, maxBytes int64) (*SpanBuffer, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	err = db.Update(func(tx *bolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(tracesBucket); err != nil {
-			return err
-		}
-		_, err := tx.CreateBucketIfNotExists(orderBucket)
+	b := &SpanBuffer{dir: dir, maxBytes: maxBytes, entries: make(map[string]entry)}
+	return b, b.loadExisting()
+}
+
+func (b *SpanBuffer) Close() error { return nil }
+
+func (b *SpanBuffer) tracePath(traceID string) string {
+	return filepath.Join(b.dir, traceID+".bin")
+}
+
+// loadExisting rebuilds the in-memory index from files on disk (restart recovery).
+func (b *SpanBuffer) loadExisting() error {
+	fis, err := os.ReadDir(b.dir)
+	if err != nil {
 		return err
-	})
-	if err != nil {
-		db.Close()
-		return nil, err
 	}
-	b := &SpanBuffer{db: db, maxTraces: maxTraces}
-	// Sync count with existing data (restart recovery).
-	_ = db.View(func(tx *bolt.Tx) error {
-		b.count.Store(int64(tx.Bucket(tracesBucket).Stats().KeyN))
-		return nil
-	})
-	return b, nil
+	for _, fi := range fis {
+		name := fi.Name()
+		if fi.IsDir() || len(name) < 5 || name[len(name)-4:] != ".bin" {
+			continue
+		}
+		traceID := name[:len(name)-4]
+		data, err := os.ReadFile(filepath.Join(b.dir, name))
+		if err != nil || len(data) < 8 {
+			continue
+		}
+		nsec := int64(binary.BigEndian.Uint64(data[:8]))
+		size := int64(len(data))
+		b.entries[traceID] = entry{insertedAt: time.Unix(0, nsec), size: size}
+		b.totalBytes += size
+	}
+	return nil
 }
 
-func (b *SpanBuffer) Close() error { return b.db.Close() }
-
-// orderKey produces a big-endian timestamp prefix + traceID for FIFO cursor ordering.
-func orderKey(ts time.Time, traceID string) []byte {
-	key := make([]byte, 8+len(traceID))
-	binary.BigEndian.PutUint64(key[:8], uint64(ts.UnixNano()))
-	copy(key[8:], traceID)
-	return key
-}
-
-// Write buffers spans for traceID. First write records insertion time in the order bucket.
-// Subsequent writes for the same traceID append spans (preserving original insertion order).
-// Value layout in traces bucket: [8 bytes insertion_ns][otlp proto bytes]
+// Write buffers spans for traceID. First write records insertion time.
+// Subsequent writes merge spans (preserving original insertion time).
+// Value layout on disk: [8 bytes insertion_ns][otlp proto bytes]
 // Returns (true, nil) when a new trace key was created.
 func (b *SpanBuffer) Write(traceID string, spans ptrace.Traces, insertedAt time.Time) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.writeLocked(traceID, spans, insertedAt)
+}
+
+func (b *SpanBuffer) writeLocked(traceID string, spans ptrace.Traces, insertedAt time.Time) (bool, error) {
 	m := ptrace.ProtoMarshaler{}
-	data, err := m.MarshalTraces(spans)
-	if err != nil {
-		return false, fmt.Errorf("marshal: %w", err)
-	}
+	path := b.tracePath(traceID)
+	existing, isExisting := b.entries[traceID]
 
-	var isNew bool
-	err = b.db.Update(func(tx *bolt.Tx) error {
-		tb := tx.Bucket(tracesBucket)
-		ob := tx.Bucket(orderBucket)
-		key := []byte(traceID)
-		existing := tb.Get(key)
+	var toWrite ptrace.Traces
+	var ts time.Time
 
-		if existing == nil {
-			isNew = true
-			if err := ob.Put(orderKey(insertedAt, traceID), nil); err != nil {
-				return err
-			}
-			var hdr [8]byte
-			binary.BigEndian.PutUint64(hdr[:], uint64(insertedAt.UnixNano()))
-			return tb.Put(key, append(hdr[:], data...))
-		}
-
-		// Existing trace: keep original insertion timestamp, merge spans
-		u := ptrace.ProtoUnmarshaler{}
-		prev, err := u.UnmarshalTraces(existing[8:])
+	if isExisting {
+		raw, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("unmarshal existing: %w", err)
+			return false, err
+		}
+		u := ptrace.ProtoUnmarshaler{}
+		prev, err := u.UnmarshalTraces(raw[8:])
+		if err != nil {
+			return false, err
 		}
 		spans.ResourceSpans().MoveAndAppendTo(prev.ResourceSpans())
-		merged, err := m.MarshalTraces(prev)
-		if err != nil {
-			return fmt.Errorf("marshal merged: %w", err)
-		}
-		return tb.Put(key, append(existing[:8:8], merged...))
-	})
-	if err == nil && isNew {
-		b.count.Add(1)
+		toWrite = prev
+		ts = existing.insertedAt
+	} else {
+		toWrite = spans
+		ts = insertedAt
 	}
-	return isNew, err
+
+	data, err := m.MarshalTraces(toWrite)
+	if err != nil {
+		return false, err
+	}
+
+	var hdr [8]byte
+	binary.BigEndian.PutUint64(hdr[:], uint64(ts.UnixNano()))
+	fileData := append(hdr[:], data...)
+
+	if err := os.WriteFile(path, fileData, 0600); err != nil {
+		return false, err
+	}
+
+	newSize := int64(len(fileData))
+	b.totalBytes -= existing.size
+	b.totalBytes += newSize
+	b.entries[traceID] = entry{insertedAt: ts, size: newSize}
+	return !isExisting, nil
 }
 
 // Read retrieves all buffered spans for traceID. ok=false means trace not found.
 func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
-	var data []byte
-	err := b.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(tracesBucket).Get([]byte(traceID))
-		if len(v) >= 8 {
-			data = make([]byte, len(v)-8)
-			copy(data, v[8:])
-		}
-		return nil
-	})
-	if err != nil || data == nil {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.entries[traceID]; !ok {
+		return ptrace.Traces{}, false, nil
+	}
+	data, err := os.ReadFile(b.tracePath(traceID))
+	if err != nil {
 		return ptrace.Traces{}, false, err
 	}
+	if len(data) < 8 {
+		return ptrace.Traces{}, false, nil
+	}
 	u := ptrace.ProtoUnmarshaler{}
-	t, err := u.UnmarshalTraces(data)
+	t, err := u.UnmarshalTraces(data[8:])
 	return t, err == nil, err
 }
 
-// Delete removes a trace from both buckets atomically.
+// Delete removes a trace from the index and disk.
 func (b *SpanBuffer) Delete(traceID string) error {
-	var deleted bool
-	err := b.db.Update(func(tx *bolt.Tx) error {
-		tb := tx.Bucket(tracesBucket)
-		key := []byte(traceID)
-		v := tb.Get(key)
-		if v == nil {
-			return nil
-		}
-		deleted = true
-		tsNs := binary.BigEndian.Uint64(v[:8])
-		if err := tx.Bucket(orderBucket).Delete(orderKey(time.Unix(0, int64(tsNs)), traceID)); err != nil {
-			return err
-		}
-		return tb.Delete(key)
-	})
-	if err == nil && deleted {
-		b.count.Add(-1)
-	}
-	return err
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deleteLocked(traceID)
 }
 
-// EvictOldest removes the oldest trace (by insertion time) to free space.
-// Returns the evicted traceID, or "" if the buffer is empty.
+func (b *SpanBuffer) deleteLocked(traceID string) error {
+	e, ok := b.entries[traceID]
+	if !ok {
+		return nil
+	}
+	if err := os.Remove(b.tracePath(traceID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	delete(b.entries, traceID)
+	b.totalBytes -= e.size
+	return nil
+}
+
+// EvictOldest removes the oldest trace (by insertion time). Returns evicted traceID or "".
 func (b *SpanBuffer) EvictOldest() (string, error) {
-	var evicted string
-	err := b.db.Update(func(tx *bolt.Tx) error {
-		ob := tx.Bucket(orderBucket)
-		c := ob.Cursor()
-		k, _ := c.First()
-		if k == nil {
-			return nil
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	oldest, oldestTime := "", time.Time{}
+	for id, e := range b.entries {
+		if oldest == "" || e.insertedAt.Before(oldestTime) {
+			oldest, oldestTime = id, e.insertedAt
 		}
-		traceID := string(k[8:])
-		evicted = traceID
-		if err := ob.Delete(k); err != nil {
-			return err
-		}
-		return tx.Bucket(tracesBucket).Delete([]byte(traceID))
-	})
-	if err == nil && evicted != "" {
-		b.count.Add(-1)
 	}
-	return evicted, err
+	if oldest == "" {
+		return "", nil
+	}
+	return oldest, b.deleteLocked(oldest)
 }
 
-// Count returns the number of traces currently in the buffer.
-func (b *SpanBuffer) Count() int64 { return b.count.Load() }
+// evictOldestLocked evicts the oldest trace except skipID. Caller must hold mu.
+// Returns "" if nothing to evict or delete failed.
+func (b *SpanBuffer) evictOldestLocked(skipID string) string {
+	oldest, oldestTime := "", time.Time{}
+	for id, e := range b.entries {
+		if id == skipID {
+			continue
+		}
+		if oldest == "" || e.insertedAt.Before(oldestTime) {
+			oldest, oldestTime = id, e.insertedAt
+		}
+	}
+	if oldest == "" {
+		return ""
+	}
+	if b.deleteLocked(oldest) != nil {
+		return ""
+	}
+	return oldest
+}
 
-// WriteWithEviction writes spans, evicting oldest traces when over capacity or disk is full.
+// WriteWithEviction writes spans, evicting oldest traces when approaching maxBytes.
 func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
-	// Evict down to capacity before writing a potentially new trace.
-	if b.maxTraces > 0 {
-		for b.count.Load() >= b.maxTraces {
-			id, err := b.EvictOldest()
-			if err != nil || id == "" {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.maxBytes > 0 {
+		m := ptrace.ProtoMarshaler{}
+		est, _ := m.MarshalTraces(spans)
+		incoming := int64(8 + len(est))
+		existing := b.entries[traceID].size // 0 if new trace
+		for b.totalBytes-existing+incoming > b.maxBytes {
+			if b.evictOldestLocked(traceID) == "" {
 				break
 			}
 		}
 	}
-	for {
-		_, err := b.Write(traceID, spans, insertedAt)
-		if err == nil {
-			return nil
-		}
-		if !isDiskFull(err) {
-			return err
-		}
-		id, evictErr := b.EvictOldest()
-		if evictErr != nil {
-			return evictErr
-		}
-		if id == "" {
-			return err // disk full, nothing left to evict
-		}
-	}
+
+	_, err := b.writeLocked(traceID, spans, insertedAt)
+	return err
 }
 
-func isDiskFull(err error) bool {
-	return strings.Contains(err.Error(), "no space left")
+// Count returns the number of traces currently in the buffer.
+func (b *SpanBuffer) Count() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return int64(len(b.entries))
 }
