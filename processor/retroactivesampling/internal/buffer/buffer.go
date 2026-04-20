@@ -25,6 +25,8 @@ type SpanBuffer struct {
 	onEvict    func(traceID string, insertedAt time.Time)
 }
 
+// New creates a SpanBuffer. onEvict, if non-nil, is called synchronously while
+// b.mu is held on each eviction; it must not call any SpanBuffer method.
 func New(dir string, maxBytes int64, onEvict func(string, time.Time)) (*SpanBuffer, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
