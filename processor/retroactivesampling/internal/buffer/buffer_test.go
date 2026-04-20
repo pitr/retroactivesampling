@@ -39,7 +39,7 @@ func TestWriteAndRead(t *testing.T) {
 	buf := newTestBuffer(t)
 	traces := singleSpanTraces("trace1_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 100)
 
-	_, err := buf.Write("trace1", traces, time.Now())
+	err := buf.WriteWithEviction("trace1", traces, time.Now())
 	require.NoError(t, err)
 
 	got, ok, err := buf.Read("trace1")
@@ -53,9 +53,9 @@ func TestWriteAppendsSpans(t *testing.T) {
 	t1 := singleSpanTraces("trace2_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 50)
 	t2 := singleSpanTraces("trace2_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 60)
 
-	_, err := buf.Write("trace2", t1, time.Now())
+	err := buf.WriteWithEviction("trace2", t1, time.Now())
 	require.NoError(t, err)
-	_, err = buf.Write("trace2", t2, time.Now())
+	err = buf.WriteWithEviction("trace2", t2, time.Now())
 	require.NoError(t, err)
 
 	got, ok, err := buf.Read("trace2")
@@ -68,42 +68,13 @@ func TestDelete(t *testing.T) {
 	buf := newTestBuffer(t)
 	traces := singleSpanTraces("trace3_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 100)
 
-	_, err := buf.Write("trace3", traces, time.Now())
+	err := buf.WriteWithEviction("trace3", traces, time.Now())
 	require.NoError(t, err)
 	require.NoError(t, buf.Delete("trace3"))
 
 	_, ok, err := buf.Read("trace3")
 	require.NoError(t, err)
 	assert.False(t, ok)
-}
-
-func TestEvictOldestFIFO(t *testing.T) {
-	buf := newTestBuffer(t)
-	now := time.Now()
-	t1 := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
-	t2 := singleSpanTraces("traceB_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
-
-	_, err := buf.Write("traceA", t1, now)
-	require.NoError(t, err)
-	_, err = buf.Write("traceB", t2, now.Add(time.Millisecond))
-	require.NoError(t, err)
-
-	evicted, err := buf.EvictOldest()
-	require.NoError(t, err)
-	assert.Equal(t, "traceA", evicted, "oldest trace should be evicted first")
-
-	_, ok, _ := buf.Read("traceA")
-	assert.False(t, ok, "evicted trace should be gone")
-
-	_, ok, _ = buf.Read("traceB")
-	assert.True(t, ok, "newer trace should remain")
-}
-
-func TestEvictOldestOnEmptyBuffer(t *testing.T) {
-	buf := newTestBuffer(t)
-	evicted, err := buf.EvictOldest()
-	require.NoError(t, err)
-	assert.Equal(t, "", evicted, "empty buffer should return empty string")
 }
 
 func TestReadMissingTrace(t *testing.T) {

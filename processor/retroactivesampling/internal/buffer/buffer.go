@@ -41,7 +41,6 @@ func (b *SpanBuffer) tracePath(traceID string) string {
 	return filepath.Join(b.dir, traceID+".bin")
 }
 
-// loadExisting rebuilds the in-memory index from files on disk (restart recovery).
 func (b *SpanBuffer) loadExisting() error {
 	fis, err := os.ReadDir(b.dir)
 	if err != nil {
@@ -65,16 +64,10 @@ func (b *SpanBuffer) loadExisting() error {
 	return nil
 }
 
-// Write buffers spans for traceID. First write records insertion time.
-// Subsequent writes merge spans (preserving original insertion time).
+// writeLocked writes spans for traceID. First write records insertion time;
+// subsequent writes merge spans (preserving original insertion time).
 // Value layout on disk: [8 bytes insertion_ns][otlp proto bytes]
 // Returns (true, nil) when a new trace key was created.
-func (b *SpanBuffer) Write(traceID string, spans ptrace.Traces, insertedAt time.Time) (bool, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.writeLocked(traceID, spans, insertedAt)
-}
-
 func (b *SpanBuffer) writeLocked(traceID string, spans ptrace.Traces, insertedAt time.Time) (bool, error) {
 	m := ptrace.ProtoMarshaler{}
 	path := b.tracePath(traceID)
@@ -121,7 +114,6 @@ func (b *SpanBuffer) writeLocked(traceID string, spans ptrace.Traces, insertedAt
 	return !isExisting, nil
 }
 
-// Read retrieves all buffered spans for traceID. ok=false means trace not found.
 func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -141,7 +133,6 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 	return t, err == nil, err
 }
 
-// Delete removes a trace from the index and disk.
 func (b *SpanBuffer) Delete(traceID string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -159,23 +150,6 @@ func (b *SpanBuffer) deleteLocked(traceID string) error {
 	delete(b.entries, traceID)
 	b.totalBytes -= e.size
 	return nil
-}
-
-// EvictOldest removes the oldest trace (by insertion time). Returns evicted traceID or "".
-func (b *SpanBuffer) EvictOldest() (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	oldest, oldestTime := "", time.Time{}
-	for id, e := range b.entries {
-		if oldest == "" || e.insertedAt.Before(oldestTime) {
-			oldest, oldestTime = id, e.insertedAt
-		}
-	}
-	if oldest == "" {
-		return "", nil
-	}
-	return oldest, b.deleteLocked(oldest)
 }
 
 // evictOldestLocked evicts the oldest trace except skipID. Caller must hold mu.
@@ -202,7 +176,6 @@ func (b *SpanBuffer) evictOldestLocked(skipID string) string {
 	return oldest
 }
 
-// WriteWithEviction writes spans, evicting oldest traces when approaching maxBytes.
 func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -221,11 +194,4 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 
 	_, err := b.writeLocked(traceID, spans, insertedAt)
 	return err
-}
-
-// Count returns the number of traces currently in the buffer.
-func (b *SpanBuffer) Count() int64 {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return int64(len(b.entries))
 }
