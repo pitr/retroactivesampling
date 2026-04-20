@@ -213,5 +213,87 @@ func (b *SpanBuffer) Delete(traceID string) error {
 	return nil
 }
 
-func (b *SpanBuffer) saveCP() error            { return nil }
-func (b *SpanBuffer) tryLoadCheckpoint() error { return fmt.Errorf("no checkpoint") }
+func (b *SpanBuffer) saveCP() error {
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.BigEndian, cpMagic)
+	binary.Write(&buf, binary.BigEndian, cpVersion)
+	binary.Write(&buf, binary.BigEndian, b.maxBytes)
+	binary.Write(&buf, binary.BigEndian, b.wHead)
+	binary.Write(&buf, binary.BigEndian, b.rHead)
+	binary.Write(&buf, binary.BigEndian, b.used)
+	binary.Write(&buf, binary.BigEndian, uint32(len(b.entries)))
+	for id, deltas := range b.entries {
+		buf.WriteByte(byte(len(id)))
+		buf.WriteString(id)
+		binary.Write(&buf, binary.BigEndian, uint32(len(deltas)))
+		for _, d := range deltas {
+			binary.Write(&buf, binary.BigEndian, d.offset)
+			binary.Write(&buf, binary.BigEndian, d.size)
+		}
+	}
+	return os.WriteFile(b.cpPath(), buf.Bytes(), 0600)
+}
+
+func (b *SpanBuffer) tryLoadCheckpoint() error {
+	data, err := os.ReadFile(b.cpPath())
+	if err != nil {
+		return err
+	}
+	r := bytes.NewReader(data)
+
+	var mg, ver uint32
+	if binary.Read(r, binary.BigEndian, &mg) != nil || mg != cpMagic {
+		return fmt.Errorf("bad magic")
+	}
+	if binary.Read(r, binary.BigEndian, &ver) != nil || ver != cpVersion {
+		return fmt.Errorf("bad version")
+	}
+
+	var maxBytes, wHead, rHead, used int64
+	binary.Read(r, binary.BigEndian, &maxBytes)
+	if maxBytes != b.maxBytes {
+		return fmt.Errorf("maxBytes mismatch: checkpoint=%d configured=%d", maxBytes, b.maxBytes)
+	}
+	binary.Read(r, binary.BigEndian, &wHead)
+	binary.Read(r, binary.BigEndian, &rHead)
+	binary.Read(r, binary.BigEndian, &used)
+
+	var entryCount uint32
+	binary.Read(r, binary.BigEndian, &entryCount)
+
+	entries := make(map[string][]deltaRecord, entryCount)
+	for i := uint32(0); i < entryCount; i++ {
+		var idLen uint8
+		binary.Read(r, binary.BigEndian, &idLen)
+		idBytes := make([]byte, idLen)
+		r.Read(idBytes)
+		var deltaCount uint32
+		binary.Read(r, binary.BigEndian, &deltaCount)
+		deltas := make([]deltaRecord, deltaCount)
+		for j := uint32(0); j < deltaCount; j++ {
+			binary.Read(r, binary.BigEndian, &deltas[j].offset)
+			binary.Read(r, binary.BigEndian, &deltas[j].size)
+		}
+		entries[string(idBytes)] = deltas
+	}
+
+	f, err := os.OpenFile(b.ringPath(), os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if info.Size() != b.maxBytes {
+		f.Close()
+		return fmt.Errorf("ring file size mismatch: got %d want %d", info.Size(), b.maxBytes)
+	}
+
+	b.f = f
+	b.wHead, b.rHead, b.used = wHead, rHead, used
+	b.entries = entries
+	_ = os.Remove(b.cpPath())
+	return nil
+}

@@ -208,3 +208,63 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
 }
+
+func TestCheckpointRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+
+	{
+		buf, err := buffer.New(dir, 1<<20)
+		require.NoError(t, err)
+		require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), time.Now()))
+		require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), time.Now()))
+		require.NoError(t, buf.Close())
+	}
+
+	{
+		buf, err := buffer.New(dir, 1<<20)
+		require.NoError(t, err)
+		defer buf.Close()
+
+		got, ok, err := buf.Read(traceA)
+		require.NoError(t, err)
+		require.True(t, ok, "traceA should survive Close+New via checkpoint")
+		assert.Equal(t, 1, got.SpanCount())
+
+		got, ok, err = buf.Read(traceB)
+		require.NoError(t, err)
+		require.True(t, ok, "traceB should survive Close+New via checkpoint")
+		assert.Equal(t, 1, got.SpanCount())
+	}
+}
+
+func TestCheckpointFreshStartOnCrash(t *testing.T) {
+	dir := t.TempDir()
+
+	buf, err := buffer.New(dir, 1<<20)
+	require.NoError(t, err)
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), time.Now()))
+	// Intentionally skip buf.Close() — simulates crash, no checkpoint written.
+
+	buf2, err := buffer.New(dir, 1<<20)
+	require.NoError(t, err)
+	defer buf2.Close()
+
+	_, ok, _ := buf2.Read(traceA)
+	assert.False(t, ok, "after crash (no checkpoint), buffer starts fresh")
+}
+
+func TestCheckpointMaxBytesMismatch(t *testing.T) {
+	dir := t.TempDir()
+
+	buf, err := buffer.New(dir, 1<<20)
+	require.NoError(t, err)
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), time.Now()))
+	require.NoError(t, buf.Close())
+
+	buf2, err := buffer.New(dir, 2<<20)
+	require.NoError(t, err)
+	defer buf2.Close()
+
+	_, ok, _ := buf2.Read(traceA)
+	assert.False(t, ok, "maxBytes mismatch should cause fresh start")
+}
