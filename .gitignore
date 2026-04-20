@@ -1,4 +1,3 @@
 bin/
-*.db
-victoria-traces-data/
+data/
 .worktrees
