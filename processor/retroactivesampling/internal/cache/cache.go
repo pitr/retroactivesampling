@@ -1,67 +1,56 @@
 package cache
 
 import (
+	"container/list"
 	"sync"
-	"time"
 )
 
 type InterestCache struct {
 	mu      sync.Mutex
-	entries map[string]time.Time
-	ttl     time.Duration
-	stop    chan struct{}
+	cap     int
+	entries map[string]*list.Element
+	lru     list.List
 }
 
-func New(ttl time.Duration) *InterestCache {
-	c := &InterestCache{
-		entries: make(map[string]time.Time),
-		ttl:     ttl,
-		stop:    make(chan struct{}),
+func New(capacity int) *InterestCache {
+	return &InterestCache{
+		cap:     capacity,
+		entries: make(map[string]*list.Element),
 	}
-	go c.sweep()
-	return c
-}
-
-func (c *InterestCache) Close() {
-	close(c.stop)
 }
 
 func (c *InterestCache) Add(traceID string) {
 	c.mu.Lock()
-	c.entries[traceID] = time.Now().Add(c.ttl)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	if el, ok := c.entries[traceID]; ok {
+		c.lru.MoveToFront(el)
+		return
+	}
+	el := c.lru.PushFront(traceID)
+	c.entries[traceID] = el
+	if c.lru.Len() > c.cap {
+		back := c.lru.Back()
+		c.lru.Remove(back)
+		delete(c.entries, back.Value.(string))
+	}
 }
 
 func (c *InterestCache) Has(traceID string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	exp, ok := c.entries[traceID]
+	el, ok := c.entries[traceID]
 	if !ok {
 		return false
 	}
-	if time.Now().After(exp) {
-		delete(c.entries, traceID)
-		return false
-	}
+	c.lru.MoveToFront(el)
 	return true
 }
 
-func (c *InterestCache) sweep() {
-	t := time.NewTicker(30 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-t.C:
-			now := time.Now()
-			c.mu.Lock()
-			for id, exp := range c.entries {
-				if now.After(exp) {
-					delete(c.entries, id)
-				}
-			}
-			c.mu.Unlock()
-		case <-c.stop:
-			return
-		}
+func (c *InterestCache) Delete(traceID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.entries[traceID]; ok {
+		c.lru.Remove(el)
+		delete(c.entries, traceID)
 	}
 }
