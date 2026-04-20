@@ -4,10 +4,15 @@ Tail-based sampling for OpenTelemetry without a central aggregator.
 
 Spans are buffered on disk per collector host. A trace is kept if any collector sees it as interesting (error status, high latency). Coordinators propagate that decision to all other collectors via Redis pub/sub.
 
+Inspired by [KubeCon presentation from VictoriaMetrics folks](https://www.youtube.com/watch?v=ehKzt_kGEeM)
+
 ## Components
 
 - **`coordinator/`** — standalone service: receives interesting-trace notifications via gRPC, deduplicates with Redis `SET NX`, broadcasts decisions to all connected processors.
-- **`processor/`** — otelcol processor plugin: buffers spans in BBolt, evaluates rules after `buffer_ttl`, ingests or drops after `drop_ttl`.
+- **`processor/`** — otelcol processor plugin.
+- **`proto/`** — protobuf definitions for gRPC communication between coordinator and processor.
+- **`example/`** — config examples for coordinator and collector.
+- **`cmd/`** — various commands.
 
 ## Running the coordinator
 
