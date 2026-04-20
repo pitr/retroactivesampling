@@ -4,7 +4,7 @@ Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk
 
 ## How it works
 
-1. Incoming spans are grouped by trace ID and written to a BBolt database.
+1. Incoming spans are grouped by trace ID and written as individual files in the configured buffer directory.
 2. After `buffer_ttl` with no new spans, the trace is evaluated against the configured rules.
 3. If interesting: delete from buffer → forward to next pipeline component → notify coordinator.
 4. If not interesting: schedule drop after `drop_ttl` (in case the coordinator later decides to keep it).
@@ -15,7 +15,8 @@ Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk
 ```yaml
 processors:
   retroactive_sampling:
-    buffer_db_path: /var/otelcol/retrosampling.db
+    buffer_dir: /var/otelcol/retrosampling/
+    max_buffer_bytes: 1073741824  # 1 GiB
     buffer_ttl: 10s
     drop_ttl: 30s
     interest_cache_ttl: 60s
@@ -28,7 +29,8 @@ processors:
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `buffer_db_path` | yes | — | Path to BBolt database file |
+| `buffer_dir` | yes | — | Directory for per-trace buffer files |
+| `max_buffer_bytes` | no | `0` (unlimited) | Max bytes of buffer disk usage; oldest traces evicted first |
 | `buffer_ttl` | no | `10s` | Idle time after last span before evaluating a trace |
 | `drop_ttl` | no | `30s` | Time to wait for a coordinator keep signal before dropping |
 | `interest_cache_ttl` | no | `60s` | TTL for fast-path cache of known-interesting trace IDs |
