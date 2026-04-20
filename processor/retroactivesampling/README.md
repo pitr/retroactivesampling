@@ -7,7 +7,7 @@ Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk
 1. Incoming spans are grouped by trace ID and written as individual files in the configured buffer directory.
 2. Each incoming batch of spans is evaluated immediately against the configured rules.
 3. If interesting: delete from buffer → forward to next pipeline component → notify coordinator.
-4. If not interesting: schedule drop after `drop_ttl` (in case the coordinator later decides to keep it).
+4. If not interesting: keep in buffer; evicted when `max_buffer_bytes` is exceeded (oldest first).
 5. The coordinator broadcasts keep decisions received from any collector to all connected processors, which ingest matching buffered traces immediately.
 
 ## Configuration
@@ -17,7 +17,7 @@ processors:
   retroactive_sampling:
     buffer_dir: /var/otelcol/retrosampling/
     max_buffer_bytes: 1073741824  # 1 GiB
-    drop_ttl: 30s
+    max_interest_cache_entries: 100000  # optional, default shown
     coordinator_endpoint: coordinator:9090
     rules:
       - type: error_status
@@ -29,7 +29,7 @@ processors:
 |---|---|---|---|
 | `buffer_dir` | yes | — | Directory for per-trace buffer files |
 | `max_buffer_bytes` | no | `0` (unlimited) | Max bytes of buffer disk usage; oldest traces evicted first |
-| `drop_ttl` | no | `30s` | Time to wait for a coordinator keep signal before dropping |
+| `max_interest_cache_entries` | no | `100000` | Max number of interesting trace IDs cached in memory for fast-path routing |
 | `coordinator_endpoint` | yes | — | `host:port` of coordinator gRPC server |
 | `rules` | yes | — | List of sampling rules (evaluated with OR logic) |
 
