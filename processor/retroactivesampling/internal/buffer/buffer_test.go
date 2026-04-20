@@ -58,3 +58,36 @@ func TestNewRejectsZeroMaxBytes(t *testing.T) {
 	_, err := buffer.New(t.TempDir(), 0)
 	assert.Error(t, err)
 }
+
+func TestWriteAndRead(t *testing.T) {
+	buf := newBuf(t)
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+
+	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
+
+	got, ok, err := buf.Read(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+}
+
+func TestWriteAppendsSpans(t *testing.T) {
+	buf := newBuf(t)
+	t1 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 50)
+	t2 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 60)
+
+	require.NoError(t, buf.WriteWithEviction(traceA, t1, time.Now()))
+	require.NoError(t, buf.WriteWithEviction(traceA, t2, time.Now()))
+
+	got, ok, err := buf.Read(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 2, got.SpanCount())
+}
+
+func TestReadMissingTrace(t *testing.T) {
+	buf := newBuf(t)
+	_, ok, err := buf.Read(traceA)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}

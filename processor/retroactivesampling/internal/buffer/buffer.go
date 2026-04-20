@@ -80,20 +80,130 @@ func (b *SpanBuffer) Close() error {
 }
 
 func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
-	return fmt.Errorf("not implemented")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	m := ptrace.ProtoMarshaler{}
+	delta, err := m.MarshalTraces(spans)
+	if err != nil {
+		return err
+	}
+
+	recSize := int64(hdrSize + len(delta))
+	if recSize > b.maxBytes {
+		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
+	}
+
+	if b.wHead+recSize > b.maxBytes {
+		b.wrapLocked()
+	}
+
+	for b.used+recSize > b.maxBytes {
+		if err := b.sweepOneLocked(); err != nil {
+			return err
+		}
+	}
+
+	var hdr [hdrSize]byte
+	copy(hdr[:32], traceID)
+	binary.BigEndian.PutUint64(hdr[32:40], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(hdr[40:44], uint32(len(delta)))
+
+	offset := b.wHead
+	if _, err := b.f.WriteAt(hdr[:], offset); err != nil {
+		return err
+	}
+	if len(delta) > 0 {
+		if _, err := b.f.WriteAt(delta, offset+hdrSize); err != nil {
+			return err
+		}
+	}
+
+	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(delta))})
+	b.wHead += recSize
+	b.used += recSize
+	return nil
+}
+
+func (b *SpanBuffer) wrapLocked() {
+	remaining := b.maxBytes - b.wHead
+	if remaining >= hdrSize {
+		var hdr [hdrSize]byte // all-zero traceID = skip record
+		binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
+		_, _ = b.f.WriteAt(hdr[:], b.wHead)
+	}
+	b.used += remaining
+	b.wHead = 0
+}
+
+func (b *SpanBuffer) sweepOneLocked() error {
+	if b.rHead >= b.maxBytes {
+		b.rHead = 0
+	}
+	if b.rHead+hdrSize > b.maxBytes {
+		remaining := b.maxBytes - b.rHead
+		b.used -= remaining
+		b.rHead = 0
+		return nil
+	}
+
+	var hdr [hdrSize]byte
+	if _, err := b.f.ReadAt(hdr[:], b.rHead); err != nil {
+		return err
+	}
+	dataLen := int64(binary.BigEndian.Uint32(hdr[40:44]))
+	recSize := int64(hdrSize) + dataLen
+
+	if bytes.Equal(hdr[:32], zeroID[:]) {
+		b.used -= recSize
+		b.rHead = 0
+		return nil
+	}
+
+	traceID := string(bytes.TrimRight(hdr[:32], "\x00"))
+	if deltas, ok := b.entries[traceID]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
+		b.entries[traceID] = deltas[1:]
+		if len(b.entries[traceID]) == 0 {
+			delete(b.entries, traceID)
+		}
+	}
+
+	b.used -= recSize
+	b.rHead += recSize
+	if b.rHead >= b.maxBytes {
+		b.rHead = 0
+	}
+	return nil
 }
 
 func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
-	return ptrace.Traces{}, false, fmt.Errorf("not implemented")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	deltas := b.entries[traceID]
+	if len(deltas) == 0 {
+		return ptrace.Traces{}, false, nil
+	}
+
+	u := ptrace.ProtoUnmarshaler{}
+	result := ptrace.NewTraces()
+	for _, d := range deltas {
+		buf := make([]byte, d.size)
+		if _, err := b.f.ReadAt(buf, d.offset+hdrSize); err != nil {
+			return ptrace.Traces{}, false, err
+		}
+		t, err := u.UnmarshalTraces(buf)
+		if err != nil {
+			return ptrace.Traces{}, false, err
+		}
+		t.ResourceSpans().MoveAndAppendTo(result.ResourceSpans())
+	}
+	return result, true, nil
 }
 
 func (b *SpanBuffer) Delete(traceID string) error {
 	return fmt.Errorf("not implemented")
 }
 
-func (b *SpanBuffer) saveCP() error                { return nil }
-func (b *SpanBuffer) tryLoadCheckpoint() error     { return fmt.Errorf("no checkpoint") }
-
-// Suppress unused import warning — bytes and binary used in later tasks.
-var _ = bytes.NewReader
-var _ = binary.BigEndian
+func (b *SpanBuffer) saveCP() error            { return nil }
+func (b *SpanBuffer) tryLoadCheckpoint() error { return fmt.Errorf("no checkpoint") }
