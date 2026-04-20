@@ -24,7 +24,6 @@ type retroactiveProcessor struct {
 	ic     *cache.InterestCache
 	eval   evaluator.Evaluator
 	coord  *coord.Client
-	cfg    *Config
 }
 
 func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
@@ -56,7 +55,6 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 		buf:    buf,
 		ic:     ic,
 		eval:   chain,
-		cfg:    cfg,
 	}
 	p.coord = coord.New(cfg.CoordinatorEndpoint, p.onDecision, set.Logger)
 	return p, nil
