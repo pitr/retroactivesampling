@@ -20,6 +20,7 @@ type Client struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	logger   *zap.Logger
+	done     chan struct{}
 }
 
 func New(endpoint string, handler DecisionHandler, logger *zap.Logger) *Client {
@@ -31,8 +32,9 @@ func New(endpoint string, handler DecisionHandler, logger *zap.Logger) *Client {
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
+		done:     make(chan struct{}),
 	}
-	go c.run()
+	go func() { defer close(c.done); c.run() }()
 	return c
 }
 
@@ -45,7 +47,7 @@ func (c *Client) Notify(traceID string) {
 	}
 }
 
-func (c *Client) Close() { c.cancel() }
+func (c *Client) Close() { c.cancel(); <-c.done }
 
 func (c *Client) run() {
 	backoff := time.Second

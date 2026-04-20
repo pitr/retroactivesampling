@@ -28,6 +28,7 @@ type retroactiveProcessor struct {
 	mu     sync.Mutex
 	timers map[string]*time.Timer // buffer_ttl timers
 	drops  map[string]*time.Timer // drop_ttl timers
+	wg     sync.WaitGroup
 }
 
 func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
@@ -60,15 +61,20 @@ func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 
 	p.mu.Lock()
 	for _, t := range p.timers {
-		t.Stop()
+		if t.Stop() {
+			p.wg.Done()
+		}
 	}
 	p.timers = make(map[string]*time.Timer)
 	for _, t := range p.drops {
-		t.Stop()
+		if t.Stop() {
+			p.wg.Done()
+		}
 	}
 	p.drops = make(map[string]*time.Timer)
 	p.mu.Unlock()
 
+	p.wg.Wait()
 	return p.buf.Close()
 }
 
@@ -101,7 +107,8 @@ func (p *retroactiveProcessor) resetBufferTimer(traceID string) {
 		t.Reset(p.cfg.BufferTTL)
 		return
 	}
-	p.timers[traceID] = time.AfterFunc(p.cfg.BufferTTL, func() { p.onBufferTimeout(traceID) })
+	p.wg.Add(1)
+	p.timers[traceID] = time.AfterFunc(p.cfg.BufferTTL, func() { defer p.wg.Done(); p.onBufferTimeout(traceID) })
 }
 
 func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
@@ -115,7 +122,7 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 	}
 	if p.eval.Evaluate(traces) {
 		p.logger.Debug("buffer timeout: locally interesting, notifying coordinator", zap.String("trace_id", traceID))
-		_ = p.buf.Delete(traceID)   // delete first — prevents onDecision from double-ingesting
+		_ = p.buf.Delete(traceID) // delete first — prevents onDecision from double-ingesting
 		if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
 			p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
 		}
@@ -126,7 +133,8 @@ func (p *retroactiveProcessor) onBufferTimeout(traceID string) {
 	// Not interesting locally — start drop timer and wait for coordinator
 	p.logger.Debug("buffer timeout: not locally interesting, waiting for coordinator decision", zap.String("trace_id", traceID), zap.Duration("drop_ttl", p.cfg.DropTTL))
 	p.mu.Lock()
-	p.drops[traceID] = time.AfterFunc(p.cfg.DropTTL, func() { p.onDropTimeout(traceID) })
+	p.wg.Add(1)
+	p.drops[traceID] = time.AfterFunc(p.cfg.DropTTL, func() { defer p.wg.Done(); p.onDropTimeout(traceID) })
 	p.mu.Unlock()
 }
 
@@ -142,7 +150,9 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	p.mu.Lock()
 	_, hadDropTimer := p.drops[traceID]
 	if t, ok := p.drops[traceID]; ok {
-		t.Stop()
+		if t.Stop() {
+			p.wg.Done()
+		}
 		delete(p.drops, traceID)
 	}
 	p.mu.Unlock()
@@ -157,8 +167,11 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	}
 	p.ic.Add(traceID)
 	traces, ok, err := p.buf.Read(traceID)
-	if err != nil || !ok {
-		p.logger.Warn("coordinator said keep but trace not in buffer", zap.String("trace_id", traceID), zap.Bool("found", ok), zap.Error(err))
+	if err != nil {
+		p.logger.Warn("coordinator said keep but got error fetching it", zap.String("trace_id", traceID), zap.Bool("found", ok), zap.Error(err))
+		return
+	}
+	if !ok {
 		return
 	}
 	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
