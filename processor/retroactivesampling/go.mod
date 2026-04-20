@@ -4,7 +4,6 @@ go 1.25.6
 
 require (
 	github.com/stretchr/testify v1.11.1
-	go.etcd.io/bbolt v1.4.3
 	go.opentelemetry.io/collector/component v1.56.0
 	go.opentelemetry.io/collector/consumer v1.56.0
 	go.opentelemetry.io/collector/consumer/consumertest v0.150.0
