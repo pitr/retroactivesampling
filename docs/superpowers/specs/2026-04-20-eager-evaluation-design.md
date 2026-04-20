@@ -35,6 +35,10 @@ Evaluation moves from quiescence-triggered (on `buffer_ttl` expiry) to per-batch
 
 Drop timer is one-shot per trace. New non-interesting batches for a trace that already has a running timer just append to the buffer; the timer keeps counting.
 
+### `MutatesData`
+
+Change `MutatesData` from `false` to `true` in `factory.go`. The processor moves span ownership between `ptrace.Traces` objects (merge in step 3d); with `false` the collector skips defensive copies in fanout, making those moves unsafe. `true` forces a copy before this processor runs — acceptable cost given the file I/O already on the hot path. This also fixes a latent bug: the current cache-hit path already calls `MoveAndAppendTo` on incoming data, which violates `MutatesData: false`.
+
 ### Coordinator path
 
 Unchanged. `onDecision` still checks `hadDropTimer`; no drop timer means no buffered spans to ingest, so it's a no-op. This is correct: if we found the trace interesting locally, we already ingested and notified.
@@ -59,6 +63,7 @@ Unchanged. `onDecision` still checks `hadDropTimer`; no drop timer means no buff
 | `timers` map | — |
 | `resetBufferTimer` function | — |
 | `onBufferTimeout` function | — |
+| `MutatesData: false` | `MutatesData: true` (processor moves span ownership) |
 
 `InterestCache` itself is kept; its TTL is set to `drop_ttl`.
 
