@@ -1,7 +1,6 @@
 package buffer_test
 
 import (
-	"os"
 	"testing"
 	"time"
 
@@ -15,11 +14,7 @@ import (
 
 func newTestBuffer(t *testing.T) *buffer.SpanBuffer {
 	t.Helper()
-	f, err := os.CreateTemp("", "buffer-*.db")
-	require.NoError(t, err)
-	f.Close()
-	t.Cleanup(func() { os.Remove(f.Name()) })
-	buf, err := buffer.New(f.Name(), 0)
+	buf, err := buffer.New(t.TempDir(), 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -124,29 +119,27 @@ func TestDeleteNonExistent(t *testing.T) {
 	require.NoError(t, err, "delete of nonexistent trace should be idempotent")
 }
 
-func TestWriteWithEvictionCountLimit(t *testing.T) {
-	f, err := os.CreateTemp("", "buffer-*.db")
+func TestWriteWithEvictionBytesLimit(t *testing.T) {
+	// Determine exact on-disk size of one trace file (header + proto).
+	sample := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(sample)
 	require.NoError(t, err)
-	f.Close()
-	t.Cleanup(func() { os.Remove(f.Name()) })
-	buf, err := buffer.New(f.Name(), 2)
+	traceFileSize := int64(8 + len(data)) // 8-byte insertedAt header + proto
+
+	buf, err := buffer.New(t.TempDir(), traceFileSize) // capacity for exactly one trace
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 
 	now := time.Now()
-	for i, id := range []string{"traceA", "traceB"} {
-		tr := singleSpanTraces(id+"_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
-		require.NoError(t, buf.WriteWithEviction(id, tr, now.Add(time.Duration(i)*time.Millisecond)))
-	}
-	assert.Equal(t, int64(2), buf.Count())
+	trA := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	require.NoError(t, buf.WriteWithEviction("traceA", trA, now))
 
-	// Writing a third trace must evict the oldest (traceA).
-	tr := singleSpanTraces("traceC_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
-	require.NoError(t, buf.WriteWithEviction("traceC", tr, now.Add(2*time.Millisecond)))
-	assert.Equal(t, int64(2), buf.Count())
+	trB := singleSpanTraces("traceB_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	require.NoError(t, buf.WriteWithEviction("traceB", trB, now.Add(time.Millisecond)))
 
 	_, ok, _ := buf.Read("traceA")
 	assert.False(t, ok, "oldest trace should have been evicted")
-	_, ok, _ = buf.Read("traceC")
+	_, ok, _ = buf.Read("traceB")
 	assert.True(t, ok, "newest trace should be present")
 }
