@@ -95,7 +95,9 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	}
 
 	if b.wHead+recSize > b.maxBytes {
-		b.wrapLocked()
+		if err := b.wrapLocked(); err != nil {
+			return err
+		}
 	}
 
 	for b.used+recSize > b.maxBytes {
@@ -125,15 +127,18 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	return nil
 }
 
-func (b *SpanBuffer) wrapLocked() {
+func (b *SpanBuffer) wrapLocked() error {
 	remaining := b.maxBytes - b.wHead
 	if remaining >= hdrSize {
 		var hdr [hdrSize]byte // all-zero traceID = skip record
 		binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
-		_, _ = b.f.WriteAt(hdr[:], b.wHead)
+		if _, err := b.f.WriteAt(hdr[:], b.wHead); err != nil {
+			return err
+		}
 	}
 	b.used += remaining
 	b.wHead = 0
+	return nil
 }
 
 func (b *SpanBuffer) sweepOneLocked() error {
@@ -202,7 +207,7 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 }
 
 func (b *SpanBuffer) Delete(traceID string) error {
-	return fmt.Errorf("not implemented")
+	return nil
 }
 
 func (b *SpanBuffer) saveCP() error            { return nil }
