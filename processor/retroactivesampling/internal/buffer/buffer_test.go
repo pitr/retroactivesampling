@@ -127,3 +127,48 @@ func TestPartialDeltaEviction(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
 }
+
+func TestWrap(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	// 5 bytes left after 2 records — too small for a skip record header (< 44), no skip written.
+	buf := newBufSize(t, 2*rs+5)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+	require.NoError(t, buf.WriteWithEviction(traceC, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
+
+	_, ok, _ := buf.Read(traceA)
+	assert.False(t, ok, "traceA should be evicted after wrap")
+
+	got, ok, err := buf.Read(traceB)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+
+	got, ok, err = buf.Read(traceC)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+}
+
+func TestWrapWithSkipRecord(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	// 50 bytes left after 2 records — >= 44, so wrapLocked writes a skip record.
+	buf := newBufSize(t, 2*rs+50)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+	require.NoError(t, buf.WriteWithEviction(traceC, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
+
+	_, ok, _ := buf.Read(traceA)
+	assert.False(t, ok, "traceA should be evicted after wrap with skip record")
+
+	got, ok, err := buf.Read(traceC)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+}
