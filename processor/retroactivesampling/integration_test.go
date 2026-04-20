@@ -1,6 +1,6 @@
 //go:build integration
 
-package integration_test
+package processor_test
 
 import (
 	"context"
@@ -71,7 +71,7 @@ func startCoordinator(t *testing.T) string {
 	return lis.Addr().String()
 }
 
-func newTestProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSink) otelprocessor.Traces {
+func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
 	cfg := &proc.Config{
 		BufferDir:           t.TempDir(),
@@ -113,20 +113,21 @@ func TestE2E_ErrorPropagatesAcrossTwoProcessors(t *testing.T) {
 
 	sinkA := &consumertest.TracesSink{}
 	sinkB := &consumertest.TracesSink{}
-	procA := newTestProcessor(t, coordAddr, sinkA)
-	procB := newTestProcessor(t, coordAddr, sinkB)
+	procA := newE2EProcessor(t, coordAddr, sinkA)
+	procB := newE2EProcessor(t, coordAddr, sinkB)
 
 	traceIDHex := "aabbccddeeff00112233445566778899"
 
+	// B receives ok span — buffered immediately (not interesting).
 	require.NoError(t, procB.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeOk)))
+	assert.Equal(t, 0, sinkB.SpanCount(), "ok span should be buffered on B")
 
-	time.Sleep(300 * time.Millisecond) // B evaluates: not interesting, holds in buffer
-
+	// A receives error span — ingested immediately and coordinator notified.
 	require.NoError(t, procA.ConsumeTraces(context.Background(), spanWithStatus(traceIDHex, ptrace.StatusCodeError)))
+	assert.Equal(t, 1, sinkA.SpanCount(), "processor A should ingest its error span immediately")
 
-	// Budget: A buffer_ttl(200ms) + gRPC broadcast + B onDecision; 1s gives margin on slow CI.
+	// Budget for gRPC broadcast + B onDecision: 1s gives margin on slow CI.
 	time.Sleep(1000 * time.Millisecond)
 
-	assert.Equal(t, 1, sinkA.SpanCount(), "processor A should ingest its error span")
 	assert.Equal(t, 1, sinkB.SpanCount(), "processor B should ingest its buffered span after coordinator push")
 }
