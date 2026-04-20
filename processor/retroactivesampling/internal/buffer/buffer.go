@@ -67,12 +67,13 @@ func (b *SpanBuffer) cpPath() string   { return filepath.Join(b.dir, "buffer.che
 func (b *SpanBuffer) Close() error {
 	b.mu.Lock()
 	f := b.f
+	if f == nil {
+		b.mu.Unlock()
+		return fmt.Errorf("already closed")
+	}
 	b.f = nil
 	err := b.saveCP()
 	b.mu.Unlock()
-	if f == nil {
-		return fmt.Errorf("already closed")
-	}
 	if err != nil {
 		f.Close()
 		return err
