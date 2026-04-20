@@ -65,12 +65,18 @@ func (b *SpanBuffer) cpPath() string   { return filepath.Join(b.dir, "buffer.che
 
 func (b *SpanBuffer) Close() error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := b.saveCP(); err != nil {
-		b.f.Close()
+	f := b.f
+	b.f = nil
+	err := b.saveCP()
+	b.mu.Unlock()
+	if f == nil {
+		return fmt.Errorf("already closed")
+	}
+	if err != nil {
+		f.Close()
 		return err
 	}
-	return b.f.Close()
+	return f.Close()
 }
 
 func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
