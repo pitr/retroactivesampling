@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -93,13 +92,8 @@ func makeTraceWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Tra
 
 func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
-	f, err := os.CreateTemp("", "proc-*.db")
-	require.NoError(t, err)
-	f.Close()
-	t.Cleanup(func() { os.Remove(f.Name()) })
-
 	cfg := &processor.Config{
-		BufferDBPath:        f.Name(),
+		BufferDir:           t.TempDir(),
 		BufferTTL:           200 * time.Millisecond,
 		DropTTL:             500 * time.Millisecond,
 		InterestCacheTTL:    5 * time.Second,

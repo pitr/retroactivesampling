@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/hex"
 	"net"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -74,13 +73,8 @@ func startCoordinator(t *testing.T) string {
 
 func newTestProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
-	f, err := os.CreateTemp("", "e2e-proc-*.db")
-	require.NoError(t, err)
-	f.Close()
-	t.Cleanup(func() { os.Remove(f.Name()) })
-
 	cfg := &proc.Config{
-		BufferDBPath:        f.Name(),
+		BufferDir:           t.TempDir(),
 		BufferTTL:           200 * time.Millisecond,
 		DropTTL:             2 * time.Second,
 		InterestCacheTTL:    10 * time.Second,

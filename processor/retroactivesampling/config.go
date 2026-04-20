@@ -7,11 +7,11 @@ import (
 )
 
 type Config struct {
-	BufferDBPath        string                 `mapstructure:"buffer_db_path"`
+	BufferDir           string                 `mapstructure:"buffer_dir"`
 	BufferTTL           time.Duration          `mapstructure:"buffer_ttl"`
 	DropTTL             time.Duration          `mapstructure:"drop_ttl"`
 	InterestCacheTTL    time.Duration          `mapstructure:"interest_cache_ttl"`
-	MaxBufferedTraces   int64                  `mapstructure:"max_buffered_traces"`
+	MaxBufferBytes      int64                  `mapstructure:"max_buffer_bytes"`
 	CoordinatorEndpoint string                 `mapstructure:"coordinator_endpoint"`
 	Rules               []evaluator.RuleConfig `mapstructure:"rules"`
 }

@@ -32,7 +32,7 @@ type retroactiveProcessor struct {
 }
 
 func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
-	buf, err := buffer.New(cfg.BufferDBPath, cfg.MaxBufferedTraces)
+	buf, err := buffer.New(cfg.BufferDir, cfg.MaxBufferBytes)
 	if err != nil {
 		return nil, err
 	}
