@@ -66,10 +66,9 @@ Processor config options:
 
 | Key | Default | Description |
 |---|---|---|
-| `buffer_db_path` | — | Path to BBolt database file |
-| `buffer_ttl` | `10s` | Wait after last span before evaluating a trace |
-| `drop_ttl` | `30s` | Wait for coordinator signal before dropping |
-| `interest_cache_ttl` | `60s` | How long to fast-path a known-interesting trace |
+| `buffer_dir` | — | Directory for buffered trace files |
+| `max_buffer_bytes` | `0` (unlimited) | Max bytes of buffer disk usage; oldest traces evicted first |
+| `max_interest_cache_entries` | `100000` | Max interesting trace IDs cached for fast-path routing |
 | `coordinator_endpoint` | — | `host:port` of coordinator gRPC server |
 | `rules` | — | List of sampling rules (see below) |
 
