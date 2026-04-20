@@ -14,7 +14,7 @@ import (
 
 func newTestBuffer(t *testing.T) *buffer.SpanBuffer {
 	t.Helper()
-	buf, err := buffer.New(t.TempDir(), 0)
+	buf, err := buffer.New(t.TempDir(), 0, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -127,7 +127,7 @@ func TestWriteWithEvictionBytesLimit(t *testing.T) {
 	require.NoError(t, err)
 	traceFileSize := int64(8 + len(data)) // 8-byte insertedAt header + proto
 
-	buf, err := buffer.New(t.TempDir(), traceFileSize) // capacity for exactly one trace
+	buf, err := buffer.New(t.TempDir(), traceFileSize, nil) // capacity for exactly one trace
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 
@@ -142,4 +142,31 @@ func TestWriteWithEvictionBytesLimit(t *testing.T) {
 	assert.False(t, ok, "oldest trace should have been evicted")
 	_, ok, _ = buf.Read("traceB")
 	assert.True(t, ok, "newest trace should be present")
+}
+
+func TestWriteWithEvictionFiresCallback(t *testing.T) {
+	sample := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(sample)
+	require.NoError(t, err)
+	traceFileSize := int64(8 + len(data))
+
+	var evictedID string
+	var evictedAt time.Time
+	buf, err := buffer.New(t.TempDir(), traceFileSize, func(id string, insertedAt time.Time) {
+		evictedID = id
+		evictedAt = insertedAt
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	insertTime := time.Now()
+	trA := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	require.NoError(t, buf.WriteWithEviction("traceA", trA, insertTime))
+
+	trB := singleSpanTraces("traceB_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	require.NoError(t, buf.WriteWithEviction("traceB", trB, insertTime.Add(time.Millisecond)))
+
+	assert.Equal(t, "traceA", evictedID, "callback should receive evicted trace ID")
+	assert.WithinDuration(t, insertTime, evictedAt, time.Second, "callback should receive original insertedAt")
 }

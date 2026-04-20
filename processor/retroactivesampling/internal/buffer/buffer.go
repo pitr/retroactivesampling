@@ -22,13 +22,14 @@ type SpanBuffer struct {
 	mu         sync.Mutex
 	entries    map[string]entry
 	totalBytes int64
+	onEvict    func(traceID string, insertedAt time.Time)
 }
 
-func New(dir string, maxBytes int64) (*SpanBuffer, error) {
+func New(dir string, maxBytes int64, onEvict func(string, time.Time)) (*SpanBuffer, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	b := &SpanBuffer{dir: dir, maxBytes: maxBytes, entries: make(map[string]entry)}
+	b := &SpanBuffer{dir: dir, maxBytes: maxBytes, onEvict: onEvict, entries: make(map[string]entry)}
 	return b, b.loadExisting()
 }
 
@@ -192,6 +193,9 @@ func (b *SpanBuffer) evictOldestLocked(skipID string) string {
 	}
 	if b.deleteLocked(oldest) != nil {
 		return ""
+	}
+	if b.onEvict != nil {
+		b.onEvict(oldest, oldestTime)
 	}
 	return oldest
 }
