@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -241,38 +242,60 @@ func (b *SpanBuffer) tryLoadCheckpoint() error {
 	}
 	r := bytes.NewReader(data)
 
+	read := func(v any) error { return binary.Read(r, binary.BigEndian, v) }
+
 	var mg, ver uint32
-	if binary.Read(r, binary.BigEndian, &mg) != nil || mg != cpMagic {
+	if read(&mg) != nil || mg != cpMagic {
 		return fmt.Errorf("bad magic")
 	}
-	if binary.Read(r, binary.BigEndian, &ver) != nil || ver != cpVersion {
+	if read(&ver) != nil || ver != cpVersion {
 		return fmt.Errorf("bad version")
 	}
 
 	var maxBytes, wHead, rHead, used int64
-	binary.Read(r, binary.BigEndian, &maxBytes)
+	if err := read(&maxBytes); err != nil {
+		return err
+	}
 	if maxBytes != b.maxBytes {
 		return fmt.Errorf("maxBytes mismatch: checkpoint=%d configured=%d", maxBytes, b.maxBytes)
 	}
-	binary.Read(r, binary.BigEndian, &wHead)
-	binary.Read(r, binary.BigEndian, &rHead)
-	binary.Read(r, binary.BigEndian, &used)
+	if err := read(&wHead); err != nil {
+		return err
+	}
+	if err := read(&rHead); err != nil {
+		return err
+	}
+	if err := read(&used); err != nil {
+		return err
+	}
 
 	var entryCount uint32
-	binary.Read(r, binary.BigEndian, &entryCount)
+	if err := read(&entryCount); err != nil {
+		return err
+	}
 
 	entries := make(map[string][]deltaRecord, entryCount)
 	for i := uint32(0); i < entryCount; i++ {
 		var idLen uint8
-		binary.Read(r, binary.BigEndian, &idLen)
+		if err := read(&idLen); err != nil {
+			return err
+		}
 		idBytes := make([]byte, idLen)
-		r.Read(idBytes)
+		if _, err := io.ReadFull(r, idBytes); err != nil {
+			return err
+		}
 		var deltaCount uint32
-		binary.Read(r, binary.BigEndian, &deltaCount)
+		if err := read(&deltaCount); err != nil {
+			return err
+		}
 		deltas := make([]deltaRecord, deltaCount)
 		for j := uint32(0); j < deltaCount; j++ {
-			binary.Read(r, binary.BigEndian, &deltas[j].offset)
-			binary.Read(r, binary.BigEndian, &deltas[j].size)
+			if err := read(&deltas[j].offset); err != nil {
+				return err
+			}
+			if err := read(&deltas[j].size); err != nil {
+				return err
+			}
 		}
 		entries[string(idBytes)] = deltas
 	}
