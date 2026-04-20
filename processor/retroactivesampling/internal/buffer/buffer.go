@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -16,10 +17,12 @@ var (
 )
 
 type SpanBuffer struct {
-	db *bolt.DB
+	db        *bolt.DB
+	count     atomic.Int64
+	maxTraces int64 // 0 = unlimited
 }
 
-func New(path string) (*SpanBuffer, error) {
+func New(path string, maxTraces int64) (*SpanBuffer, error) {
 	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: time.Second})
 	if err != nil {
 		return nil, err
@@ -35,7 +38,13 @@ func New(path string) (*SpanBuffer, error) {
 		db.Close()
 		return nil, err
 	}
-	return &SpanBuffer{db: db}, nil
+	b := &SpanBuffer{db: db, maxTraces: maxTraces}
+	// Sync count with existing data (restart recovery).
+	_ = db.View(func(tx *bolt.Tx) error {
+		b.count.Store(int64(tx.Bucket(tracesBucket).Stats().KeyN))
+		return nil
+	})
+	return b, nil
 }
 
 func (b *SpanBuffer) Close() error { return b.db.Close() }
@@ -51,21 +60,23 @@ func orderKey(ts time.Time, traceID string) []byte {
 // Write buffers spans for traceID. First write records insertion time in the order bucket.
 // Subsequent writes for the same traceID append spans (preserving original insertion order).
 // Value layout in traces bucket: [8 bytes insertion_ns][otlp proto bytes]
-func (b *SpanBuffer) Write(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
+// Returns (true, nil) when a new trace key was created.
+func (b *SpanBuffer) Write(traceID string, spans ptrace.Traces, insertedAt time.Time) (bool, error) {
 	m := ptrace.ProtoMarshaler{}
 	data, err := m.MarshalTraces(spans)
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
+		return false, fmt.Errorf("marshal: %w", err)
 	}
 
-	return b.db.Update(func(tx *bolt.Tx) error {
+	var isNew bool
+	err = b.db.Update(func(tx *bolt.Tx) error {
 		tb := tx.Bucket(tracesBucket)
 		ob := tx.Bucket(orderBucket)
 		key := []byte(traceID)
 		existing := tb.Get(key)
 
 		if existing == nil {
-			// New trace: record in order bucket with insertion timestamp as header
+			isNew = true
 			if err := ob.Put(orderKey(insertedAt, traceID), nil); err != nil {
 				return err
 			}
@@ -87,6 +98,10 @@ func (b *SpanBuffer) Write(traceID string, spans ptrace.Traces, insertedAt time.
 		}
 		return tb.Put(key, append(existing[:8:8], merged...))
 	})
+	if err == nil && isNew {
+		b.count.Add(1)
+	}
+	return isNew, err
 }
 
 // Read retrieves all buffered spans for traceID. ok=false means trace not found.
@@ -94,7 +109,7 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 	var data []byte
 	err := b.db.View(func(tx *bolt.Tx) error {
 		v := tx.Bucket(tracesBucket).Get([]byte(traceID))
-		if v != nil && len(v) >= 8 {
+		if len(v) >= 8 {
 			data = make([]byte, len(v)-8)
 			copy(data, v[8:])
 		}
@@ -110,19 +125,25 @@ func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
 
 // Delete removes a trace from both buckets atomically.
 func (b *SpanBuffer) Delete(traceID string) error {
-	return b.db.Update(func(tx *bolt.Tx) error {
+	var deleted bool
+	err := b.db.Update(func(tx *bolt.Tx) error {
 		tb := tx.Bucket(tracesBucket)
 		key := []byte(traceID)
 		v := tb.Get(key)
 		if v == nil {
 			return nil
 		}
+		deleted = true
 		tsNs := binary.BigEndian.Uint64(v[:8])
 		if err := tx.Bucket(orderBucket).Delete(orderKey(time.Unix(0, int64(tsNs)), traceID)); err != nil {
 			return err
 		}
 		return tb.Delete(key)
 	})
+	if err == nil && deleted {
+		b.count.Add(-1)
+	}
+	return err
 }
 
 // EvictOldest removes the oldest trace (by insertion time) to free space.
@@ -143,13 +164,28 @@ func (b *SpanBuffer) EvictOldest() (string, error) {
 		}
 		return tx.Bucket(tracesBucket).Delete([]byte(traceID))
 	})
+	if err == nil && evicted != "" {
+		b.count.Add(-1)
+	}
 	return evicted, err
 }
 
-// WriteWithEviction writes spans, evicting oldest traces if the disk is full.
+// Count returns the number of traces currently in the buffer.
+func (b *SpanBuffer) Count() int64 { return b.count.Load() }
+
+// WriteWithEviction writes spans, evicting oldest traces when over capacity or disk is full.
 func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
+	// Evict down to capacity before writing a potentially new trace.
+	if b.maxTraces > 0 {
+		for b.count.Load() >= b.maxTraces {
+			id, err := b.EvictOldest()
+			if err != nil || id == "" {
+				break
+			}
+		}
+	}
 	for {
-		err := b.Write(traceID, spans, insertedAt)
+		_, err := b.Write(traceID, spans, insertedAt)
 		if err == nil {
 			return nil
 		}

@@ -31,7 +31,7 @@ type retroactiveProcessor struct {
 }
 
 func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
-	buf, err := buffer.New(cfg.BufferDBPath)
+	buf, err := buffer.New(cfg.BufferDBPath, cfg.MaxBufferedTraces)
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +56,7 @@ func newProcessor(logger *zap.Logger, cfg *Config, next consumer.Traces) (*retro
 
 func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 	p.coord.Close()
+	p.ic.Close()
 
 	p.mu.Lock()
 	for _, t := range p.timers {
@@ -147,7 +148,7 @@ func (p *retroactiveProcessor) onDecision(traceID string, keep bool) {
 	p.mu.Unlock()
 
 	if !hadDropTimer {
-		p.logger.Warn("coordinator decision for unknown/already-expired trace", zap.String("trace_id", traceID), zap.Bool("keep", keep))
+		return // broadcast for a trace we never buffered (or already expired); nothing to do
 	}
 
 	if !keep {

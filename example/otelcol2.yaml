@@ -10,6 +10,7 @@ processors:
     buffer_ttl: 10s
     drop_ttl: 30s
     interest_cache_ttl: 60s
+    max_buffered_traces: 50000
     coordinator_endpoint: localhost:9090
     rules:
       - type: error_status

@@ -9,15 +9,21 @@ type InterestCache struct {
 	mu      sync.Mutex
 	entries map[string]time.Time
 	ttl     time.Duration
+	stop    chan struct{}
 }
 
 func New(ttl time.Duration) *InterestCache {
 	c := &InterestCache{
 		entries: make(map[string]time.Time),
 		ttl:     ttl,
+		stop:    make(chan struct{}),
 	}
 	go c.sweep()
 	return c
+}
+
+func (c *InterestCache) Close() {
+	close(c.stop)
 }
 
 func (c *InterestCache) Add(traceID string) {
@@ -43,14 +49,19 @@ func (c *InterestCache) Has(traceID string) bool {
 func (c *InterestCache) sweep() {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
-	for range t.C {
-		now := time.Now()
-		c.mu.Lock()
-		for id, exp := range c.entries {
-			if now.After(exp) {
-				delete(c.entries, id)
+	for {
+		select {
+		case <-t.C:
+			now := time.Now()
+			c.mu.Lock()
+			for id, exp := range c.entries {
+				if now.After(exp) {
+					delete(c.entries, id)
+				}
 			}
+			c.mu.Unlock()
+		case <-c.stop:
+			return
 		}
-		c.mu.Unlock()
 	}
 }

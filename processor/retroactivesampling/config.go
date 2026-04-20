@@ -11,6 +11,7 @@ type Config struct {
 	BufferTTL           time.Duration          `mapstructure:"buffer_ttl"`
 	DropTTL             time.Duration          `mapstructure:"drop_ttl"`
 	InterestCacheTTL    time.Duration          `mapstructure:"interest_cache_ttl"`
+	MaxBufferedTraces   int64                  `mapstructure:"max_buffered_traces"`
 	CoordinatorEndpoint string                 `mapstructure:"coordinator_endpoint"`
 	Rules               []evaluator.RuleConfig `mapstructure:"rules"`
 }

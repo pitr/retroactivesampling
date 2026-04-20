@@ -19,7 +19,7 @@ func newTestBuffer(t *testing.T) *buffer.SpanBuffer {
 	require.NoError(t, err)
 	f.Close()
 	t.Cleanup(func() { os.Remove(f.Name()) })
-	buf, err := buffer.New(f.Name())
+	buf, err := buffer.New(f.Name(), 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -44,7 +44,8 @@ func TestWriteAndRead(t *testing.T) {
 	buf := newTestBuffer(t)
 	traces := singleSpanTraces("trace1_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 100)
 
-	require.NoError(t, buf.Write("trace1", traces, time.Now()))
+	_, err := buf.Write("trace1", traces, time.Now())
+	require.NoError(t, err)
 
 	got, ok, err := buf.Read("trace1")
 	require.NoError(t, err)
@@ -57,8 +58,10 @@ func TestWriteAppendsSpans(t *testing.T) {
 	t1 := singleSpanTraces("trace2_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 50)
 	t2 := singleSpanTraces("trace2_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 60)
 
-	require.NoError(t, buf.Write("trace2", t1, time.Now()))
-	require.NoError(t, buf.Write("trace2", t2, time.Now()))
+	_, err := buf.Write("trace2", t1, time.Now())
+	require.NoError(t, err)
+	_, err = buf.Write("trace2", t2, time.Now())
+	require.NoError(t, err)
 
 	got, ok, err := buf.Read("trace2")
 	require.NoError(t, err)
@@ -70,7 +73,8 @@ func TestDelete(t *testing.T) {
 	buf := newTestBuffer(t)
 	traces := singleSpanTraces("trace3_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 100)
 
-	require.NoError(t, buf.Write("trace3", traces, time.Now()))
+	_, err := buf.Write("trace3", traces, time.Now())
+	require.NoError(t, err)
 	require.NoError(t, buf.Delete("trace3"))
 
 	_, ok, err := buf.Read("trace3")
@@ -84,8 +88,10 @@ func TestEvictOldestFIFO(t *testing.T) {
 	t1 := singleSpanTraces("traceA_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
 	t2 := singleSpanTraces("traceB_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
 
-	require.NoError(t, buf.Write("traceA", t1, now))
-	require.NoError(t, buf.Write("traceB", t2, now.Add(time.Millisecond)))
+	_, err := buf.Write("traceA", t1, now)
+	require.NoError(t, err)
+	_, err = buf.Write("traceB", t2, now.Add(time.Millisecond))
+	require.NoError(t, err)
 
 	evicted, err := buf.EvictOldest()
 	require.NoError(t, err)
@@ -116,4 +122,31 @@ func TestDeleteNonExistent(t *testing.T) {
 	buf := newTestBuffer(t)
 	err := buf.Delete("nonexistent")
 	require.NoError(t, err, "delete of nonexistent trace should be idempotent")
+}
+
+func TestWriteWithEvictionCountLimit(t *testing.T) {
+	f, err := os.CreateTemp("", "buffer-*.db")
+	require.NoError(t, err)
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+	buf, err := buffer.New(f.Name(), 2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	now := time.Now()
+	for i, id := range []string{"traceA", "traceB"} {
+		tr := singleSpanTraces(id+"_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+		require.NoError(t, buf.WriteWithEviction(id, tr, now.Add(time.Duration(i)*time.Millisecond)))
+	}
+	assert.Equal(t, int64(2), buf.Count())
+
+	// Writing a third trace must evict the oldest (traceA).
+	tr := singleSpanTraces("traceC_xxxxxxxxxxxxxA", ptrace.StatusCodeOk, 10)
+	require.NoError(t, buf.WriteWithEviction("traceC", tr, now.Add(2*time.Millisecond)))
+	assert.Equal(t, int64(2), buf.Count())
+
+	_, ok, _ := buf.Read("traceA")
+	assert.False(t, ok, "oldest trace should have been evicted")
+	_, ok, _ = buf.Read("traceC")
+	assert.True(t, ok, "newest trace should be present")
 }
