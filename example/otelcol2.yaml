@@ -6,11 +6,9 @@ receivers:
 
 processors:
   retroactive_sampling:
-    buffer_db_path: ./retrosampling2.db
-    buffer_ttl: 10s
+    buffer_dir: ./retrosampling2
     drop_ttl: 30s
-    interest_cache_ttl: 60s
-    max_buffered_traces: 50000
+    max_buffer_bytes: 1048576  # 1 MB
     coordinator_endpoint: localhost:9090
     rules:
       - type: error_status
