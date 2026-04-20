@@ -91,3 +91,39 @@ func TestReadMissingTrace(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
+
+func TestEviction(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	buf := newBufSize(t, rs)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+
+	_, ok, _ := buf.Read(traceA)
+	assert.False(t, ok, "traceA should be evicted")
+	_, ok, _ = buf.Read(traceB)
+	assert.True(t, ok, "traceB should be present")
+}
+
+func TestPartialDeltaEviction(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	buf := newBufSize(t, 2*rs+1)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 200), now.Add(time.Millisecond)))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
+
+	got, ok, err := buf.Read(traceA)
+	require.NoError(t, err)
+	require.True(t, ok, "traceA should still be readable via its second delta")
+	assert.Equal(t, 1, got.SpanCount())
+
+	got, ok, err = buf.Read(traceB)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+}
