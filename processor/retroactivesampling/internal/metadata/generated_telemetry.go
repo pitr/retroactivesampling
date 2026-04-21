@@ -26,7 +26,7 @@ type TelemetryBuilder struct {
 	meter                                      metric.Meter
 	mu                                         sync.Mutex
 	registrations                              []metric.Registration
-	RetroactiveSamplingBufferSpanAgeOnEviction metric.Float64Histogram
+	RetroactiveSamplingBufferSpanAgeOnEviction metric.Int64Histogram
 }
 
 // TelemetryBuilderOption applies changes to default builder.
@@ -58,10 +58,11 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	}
 	builder.meter = Meter(settings)
 	var err, errs error
-	builder.RetroactiveSamplingBufferSpanAgeOnEviction, err = builder.meter.Float64Histogram(
+	builder.RetroactiveSamplingBufferSpanAgeOnEviction, err = builder.meter.Int64Histogram(
 		"otelcol_retroactive_sampling_buffer_span_age_on_eviction",
 		metric.WithDescription("Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure [Development]"),
 		metric.WithUnit("ms"),
+		metric.WithExplicitBucketBoundaries([]float64{0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000}...),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

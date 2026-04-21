@@ -33,7 +33,7 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 		return nil, err
 	}
 	obs := func(d time.Duration) {
-		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), float64(d.Milliseconds()))
+		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
 	}
 	ic := cache.New(cfg.MaxInterestCacheEntries)
 	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes, obs)

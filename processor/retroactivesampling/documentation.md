@@ -12,4 +12,4 @@ Age of span batches (in milliseconds) when evicted from the ring buffer due to p
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| ms | Histogram | Double | Development |
+| ms | Histogram | Int | Development |

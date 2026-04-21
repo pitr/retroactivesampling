@@ -21,7 +21,7 @@ func TestSetupTelemetry(t *testing.T) {
 	defer tb.Shutdown()
 	tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), 1)
 	AssertEqualRetroactiveSamplingBufferSpanAgeOnEviction(t, testTel,
-		[]metricdata.HistogramDataPoint[float64]{{}}, metricdatatest.IgnoreValue(),
+		[]metricdata.HistogramDataPoint[int64]{{}}, metricdatatest.IgnoreValue(),
 		metricdatatest.IgnoreTimestamp())
 
 	require.NoError(t, testTel.Shutdown(context.Background()))
