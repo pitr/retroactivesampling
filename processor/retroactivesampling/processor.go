@@ -93,13 +93,12 @@ func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.
 	p.ic.Add(traceID)
 	p.coord.Notify(traceID)
 
-	buffered, ok, err := p.buf.Read(traceID)
+	buffered, ok, err := p.buf.ReadAndDelete(traceID)
 	if err != nil {
 		p.logger.Warn("read buffer for interesting trace", zap.String("trace_id", traceID), zap.Error(err))
 		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
 			p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err2))
 		}
-		_ = p.buf.Delete(traceID)
 		return
 	}
 	if ok {
@@ -109,13 +108,12 @@ func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
 		p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
 	}
-	_ = p.buf.Delete(traceID)
 }
 
 func (p *retroactiveProcessor) onDecision(traceID string) {
 	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID))
 	p.ic.Add(traceID)
-	traces, ok, err := p.buf.Read(traceID)
+	traces, ok, err := p.buf.ReadAndDelete(traceID)
 	if err != nil {
 		p.logger.Warn("coordinator decision: error fetching buffered trace", zap.String("trace_id", traceID), zap.Error(err))
 		return
@@ -126,5 +124,4 @@ func (p *retroactiveProcessor) onDecision(traceID string) {
 	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
 		p.logger.Error("ingest coordinator-decided trace", zap.String("trace_id", traceID), zap.Error(err))
 	}
-	_ = p.buf.Delete(traceID)
 }
