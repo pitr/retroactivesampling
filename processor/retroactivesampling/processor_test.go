@@ -265,6 +265,5 @@ func TestConcurrentInterestingAndCoordinatorDecision(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return sink.SpanCount() >= 2
 	}, 2*time.Second, 10*time.Millisecond, "spans must be ingested")
-	time.Sleep(50 * time.Millisecond) // let any erroneous second write arrive
-	assert.Equal(t, 2, sink.SpanCount(), "buffered span must not be duplicated")
+	assert.Never(t, func() bool { return sink.SpanCount() > 2 }, 50*time.Millisecond, 5*time.Millisecond, "double-write: buffered span must not be duplicated")
 }
