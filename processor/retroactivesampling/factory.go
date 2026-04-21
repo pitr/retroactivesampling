@@ -1,4 +1,4 @@
-package processor
+package retroactivesampling
 
 import (
 	"context"
@@ -7,15 +7,15 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	otelprocessor "go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/processorhelper"
-)
 
-const typeStr = "retroactive_sampling"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/metadata"
+)
 
 func NewFactory() otelprocessor.Factory {
 	return otelprocessor.NewFactory(
-		component.MustNewType(typeStr),
+		metadata.Type,
 		createDefaultConfig,
-		otelprocessor.WithTraces(createTracesProcessor, component.StabilityLevelDevelopment),
+		otelprocessor.WithTraces(createTracesProcessor, metadata.TracesStability),
 	)
 }
 

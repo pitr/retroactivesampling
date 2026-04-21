@@ -11,7 +11,7 @@ receivers:
 processors:
   retroactive_sampling:
     buffer_file: ./data/retrosampling2.ring
-    max_buffer_bytes: 10485760  # 10 MB
+    max_buffer_bytes: 1073741824  # 1 GB
     coordinator_endpoint: localhost:9090
     rules:
       - type: error_status

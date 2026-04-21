@@ -1,4 +1,4 @@
-package processor
+package retroactivesampling
 
 import (
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"

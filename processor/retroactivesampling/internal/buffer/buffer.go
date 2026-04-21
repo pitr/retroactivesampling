@@ -27,18 +27,22 @@ type deltaRecord struct {
 }
 
 type SpanBuffer struct {
-	maxBytes    int64
-	f           *os.File
-	data        []byte
-	wHead       int64
-	rHead       int64
-	used        int64
-	lastMadvise int64
-	entries     map[string][]deltaRecord
-	mu          sync.Mutex
+	maxBytes      int64
+	f             *os.File
+	data          []byte
+	wHead         int64
+	rHead         int64
+	used          int64
+	lastMadvise   int64
+	entries       map[string][]deltaRecord
+	evictObserver func(time.Duration)
+	mu            sync.Mutex
 }
 
-func New(file string, maxBytes int64) (*SpanBuffer, error) {
+func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanBuffer, error) {
+	if evictObserver == nil {
+		evictObserver = func(time.Duration) {}
+	}
 	if maxBytes <= 0 {
 		return nil, fmt.Errorf("maxBytes must be positive, got %d", maxBytes)
 	}
@@ -67,10 +71,11 @@ func New(file string, maxBytes int64) (*SpanBuffer, error) {
 	}
 	_ = unix.Madvise(data, unix.MADV_SEQUENTIAL)
 	return &SpanBuffer{
-		maxBytes: maxBytes,
-		f:        f,
-		data:     data,
-		entries:  make(map[string][]deltaRecord),
+		maxBytes:      maxBytes,
+		f:             f,
+		data:          data,
+		entries:       make(map[string][]deltaRecord),
+		evictObserver: evictObserver,
 	}, nil
 }
 
@@ -168,6 +173,8 @@ func (b *SpanBuffer) sweepOneLocked() error {
 
 	traceID := string(bytes.TrimRight(hdr[:32], "\x00"))
 	if deltas, ok := b.entries[traceID]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
+		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[32:40])))
+		b.evictObserver(time.Since(insertedAt))
 		b.entries[traceID] = deltas[1:]
 		if len(b.entries[traceID]) == 0 {
 			delete(b.entries, traceID)

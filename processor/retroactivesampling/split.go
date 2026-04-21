@@ -1,4 +1,4 @@
-package processor
+package retroactivesampling
 
 import "go.opentelemetry.io/collector/pdata/ptrace"
 

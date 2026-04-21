@@ -49,8 +49,12 @@ func newBuf(t *testing.T) *buffer.SpanBuffer {
 }
 
 func newBufSize(t *testing.T, maxBytes int64) *buffer.SpanBuffer {
+	return newBufSizeWithObserver(t, maxBytes, nil)
+}
+
+func newBufSizeWithObserver(t *testing.T, maxBytes int64, obs func(time.Duration)) *buffer.SpanBuffer {
 	t.Helper()
-	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes)
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes, obs)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -58,7 +62,7 @@ func newBufSize(t *testing.T, maxBytes int64) *buffer.SpanBuffer {
 
 func TestNewCreatesFileAtPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spans.ring")
-	buf, err := buffer.New(path, 1<<20)
+	buf, err := buffer.New(path, 1<<20, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 
@@ -68,7 +72,7 @@ func TestNewCreatesFileAtPath(t *testing.T) {
 }
 
 func TestNewRejectsZeroMaxBytes(t *testing.T) {
-	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 0)
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 0, nil)
 	assert.Error(t, err)
 }
 
@@ -200,6 +204,39 @@ func TestDeleteOrphanSweptOnNextWrite(t *testing.T) {
 	assert.False(t, ok)
 	_, ok, _ = buf.Read(traceB)
 	assert.True(t, ok)
+}
+
+func TestEvictionObserverCalledForLiveRecord(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+
+	var observed []time.Duration
+	buf := newBufSizeWithObserver(t, rs, func(d time.Duration) {
+		observed = append(observed, d)
+	})
+
+	past := time.Now().Add(-50 * time.Millisecond)
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), past))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), time.Now()))
+
+	require.Len(t, observed, 1, "observer called once for the one live eviction")
+	assert.Greater(t, observed[0], time.Duration(0), "observed duration must be positive")
+}
+
+func TestEvictionObserverNotCalledForOrphans(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+
+	var count int
+	buf := newBufSizeWithObserver(t, rs, func(time.Duration) { count++ })
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.Delete(traceA))
+	// sweepOneLocked will see traceA in ring but not in entries (orphaned).
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+
+	assert.Equal(t, 0, count, "observer must not fire for orphaned records")
 }
 
 func TestWrapWithSkipRecord(t *testing.T) {

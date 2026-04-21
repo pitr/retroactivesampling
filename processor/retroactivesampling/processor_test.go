@@ -1,4 +1,4 @@
-package processor_test
+package retroactivesampling_test
 
 import (
 	"context"

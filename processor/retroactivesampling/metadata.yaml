@@ -1,0 +1,22 @@
+type: retroactive_sampling
+
+tests:
+  config:
+    buffer_file: /tmp/retrosampling-lifecycle-test.ring
+    max_buffer_bytes: 1048576
+    coordinator_endpoint: "127.0.0.1:4317"
+
+status:
+  class: processor
+  stability:
+    development: [traces]
+
+telemetry:
+  metrics:
+    retroactive_sampling_buffer_span_age_on_eviction:
+      description: Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure
+      stability: development
+      unit: ms
+      enabled: true
+      histogram:
+        value_type: double

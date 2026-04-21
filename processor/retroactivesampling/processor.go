@@ -1,4 +1,4 @@
-package processor
+package retroactivesampling
 
 import (
 	"context"
@@ -14,34 +14,46 @@ import (
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/cache"
 	coord "pitr.ca/retroactivesampling/processor/retroactivesampling/internal/coordinator"
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
+	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/metadata"
 )
 
 type retroactiveProcessor struct {
-	logger *zap.Logger
-	next   consumer.Traces
-	buf    *buffer.SpanBuffer
-	ic     *cache.InterestCache
-	eval   evaluator.Evaluator
-	coord  *coord.Client
+	logger    *zap.Logger
+	next      consumer.Traces
+	buf       *buffer.SpanBuffer
+	ic        *cache.InterestCache
+	eval      evaluator.Evaluator
+	coord     *coord.Client
+	telemetry *metadata.TelemetryBuilder
 }
 
 func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
-	ic := cache.New(cfg.MaxInterestCacheEntries)
-	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes)
+	tb, err := metadata.NewTelemetryBuilder(set)
 	if err != nil {
+		return nil, err
+	}
+	obs := func(d time.Duration) {
+		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), float64(d.Milliseconds()))
+	}
+	ic := cache.New(cfg.MaxInterestCacheEntries)
+	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes, obs)
+	if err != nil {
+		tb.Shutdown()
 		return nil, err
 	}
 	chain, err := evaluator.Build(cfg.Rules)
 	if err != nil {
 		buf.Close()
+		tb.Shutdown()
 		return nil, err
 	}
 	p := &retroactiveProcessor{
-		logger: set.Logger,
-		next:   next,
-		buf:    buf,
-		ic:     ic,
-		eval:   chain,
+		logger:    set.Logger,
+		next:      next,
+		buf:       buf,
+		ic:        ic,
+		eval:      chain,
+		telemetry: tb,
 	}
 	p.coord = coord.New(cfg.CoordinatorEndpoint, p.onDecision, set.Logger)
 	return p, nil
@@ -49,7 +61,9 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 
 func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 	p.coord.Close()
-	return p.buf.Close()
+	err := p.buf.Close()
+	p.telemetry.Shutdown()
+	return err
 }
 
 func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces) (ptrace.Traces, error) {
