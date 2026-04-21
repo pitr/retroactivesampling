@@ -190,3 +190,81 @@ func TestEagerEval_BufferedSpansIncludedOnInterestingBatch(t *testing.T) {
 	// Both spans (buffered ok + current error) ingested in one ConsumeTraces call.
 	assert.Equal(t, 2, sink.SpanCount(), "buffered ok span and error span must both be ingested")
 }
+
+// TestConcurrentInterestingSpansSameTrace verifies no double-write when two goroutines
+// concurrently decide the same trace is interesting.
+func TestConcurrentInterestingSpansSameTrace(t *testing.T) {
+	_, addr := startFakeCoordinator(t)
+	sink := &consumertest.TracesSink{}
+	p := newTestProcessor(t, addr, sink)
+
+	const tid = "aabbccdd66666666aabbccdd66666666"
+
+	// Pre-buffer one ok span.
+	require.NoError(t, p.ConsumeTraces(context.Background(), makeTraceWithStatus(tid, ptrace.StatusCodeOk)))
+	assert.Equal(t, 0, sink.SpanCount(), "ok span should be buffered, not ingested")
+
+	// Release two goroutines simultaneously, each delivering an error span for the same trace.
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	done.Add(2)
+	for range 2 {
+		go func() {
+			start.Wait()
+			_ = p.ConsumeTraces(context.Background(), makeTraceWithStatus(tid, ptrace.StatusCodeError))
+			done.Done()
+		}()
+	}
+	start.Done()
+	done.Wait()
+
+	// 1 pre-buffered ok span + 2 error spans = 3. The buffered span must not appear twice (4).
+	assert.Equal(t, 3, sink.SpanCount(), "buffered span must not be duplicated")
+}
+
+// TestConcurrentInterestingAndCoordinatorDecision verifies no double-write when
+// ingestInteresting and onDecision race to consume the same buffered trace.
+func TestConcurrentInterestingAndCoordinatorDecision(t *testing.T) {
+	fc, addr := startFakeCoordinator(t)
+	sink := &consumertest.TracesSink{}
+	p := newTestProcessor(t, addr, sink)
+
+	const tid = "aabbccdd77777777aabbccdd77777777"
+
+	// Wait for the gRPC stream to establish before pre-buffering.
+	require.Eventually(t, func() bool {
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		return len(fc.streams) > 0
+	}, 2*time.Second, 10*time.Millisecond, "coordinator stream must connect")
+
+	// Pre-buffer one ok span.
+	require.NoError(t, p.ConsumeTraces(context.Background(), makeTraceWithStatus(tid, ptrace.StatusCodeOk)))
+	assert.Equal(t, 0, sink.SpanCount(), "ok span should be buffered")
+
+	// Concurrently: error span via ConsumeTraces AND coordinator decision.
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	done.Add(2)
+	go func() {
+		start.Wait()
+		_ = p.ConsumeTraces(context.Background(), makeTraceWithStatus(tid, ptrace.StatusCodeError))
+		done.Done()
+	}()
+	go func() {
+		start.Wait()
+		fc.sendDecision(tid)
+		done.Done()
+	}()
+	start.Done()
+	done.Wait()
+
+	// 1 pre-buffered ok + 1 error = 2 total. Must not be 3 (double-buffered).
+	require.Eventually(t, func() bool {
+		return sink.SpanCount() >= 2
+	}, 2*time.Second, 10*time.Millisecond, "spans must be ingested")
+	time.Sleep(50 * time.Millisecond) // let any erroneous second write arrive
+	assert.Equal(t, 2, sink.SpanCount(), "buffered span must not be duplicated")
+}
