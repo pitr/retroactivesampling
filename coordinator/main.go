@@ -65,6 +65,9 @@ func main() {
 	defer cancel()
 
 	srv := server.New(func(traceID string) {
+		if ctx.Err() != nil {
+			return
+		}
 		if _, err := ps.Publish(ctx, traceID); err != nil {
 			log.Printf("publish %s: %v", traceID, err)
 		}
@@ -91,6 +94,7 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
+		log.Printf("shutting down")
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stopCancel()
 		done := make(chan struct{})
@@ -101,9 +105,11 @@ func main() {
 		select {
 		case <-done:
 		case <-stopCtx.Done():
+			log.Printf("graceful stop timed out, forcing")
 			gs.Stop()
 		}
 		_ = ps.Close()
+		log.Printf("shutdown complete")
 	}()
 
 	log.Printf("coordinator listening on %s", cfg.GRPCListen)
