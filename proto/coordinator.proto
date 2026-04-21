@@ -19,10 +19,9 @@ message CoordinatorMessage {
 }
 
 message NotifyInteresting {
-  string trace_id = 1;
+  bytes trace_id = 1;
 }
 
 message TraceDecision {
-  string trace_id = 1;
-  bool keep = 2;
+  bytes trace_id = 1;
 }

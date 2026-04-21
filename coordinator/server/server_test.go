@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/hex"
 	"net"
 	"testing"
 	"time"
@@ -38,28 +39,30 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 	stream, err := gen.NewCoordinatorClient(conn).Connect(context.Background())
 	require.NoError(t, err)
 
+	const traceHex = "aabbccdd11111111aabbccdd11111111"
+	traceBytes, _ := hex.DecodeString(traceHex)
+
 	// Processor sends notification
 	err = stream.Send(&gen.ProcessorMessage{
 		Payload: &gen.ProcessorMessage_Notify{
-			Notify: &gen.NotifyInteresting{TraceId: "trace-1"},
+			Notify: &gen.NotifyInteresting{TraceId: traceBytes},
 		},
 	})
 	require.NoError(t, err)
 
 	select {
 	case id := <-notified:
-		assert.Equal(t, "trace-1", id)
+		assert.Equal(t, traceHex, id)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for notification")
 	}
 
 	// notified channel receipt proves the stream is registered — Broadcast will reach it.
-	srv.Broadcast("trace-1", true)
+	srv.Broadcast(traceHex)
 
 	msg, err := stream.Recv()
 	require.NoError(t, err)
 	d := msg.GetDecision()
 	require.NotNil(t, d)
-	assert.Equal(t, "trace-1", d.TraceId)
-	assert.True(t, d.Keep)
+	assert.Equal(t, traceBytes, d.TraceId)
 }

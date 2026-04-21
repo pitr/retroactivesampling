@@ -81,7 +81,7 @@ func main() {
 	// code path handles all decisions regardless of which instance originated them.
 	go func() {
 		if err := ps.Subscribe(ctx, func(traceID string) {
-			srv.Broadcast(traceID, true)
+			srv.Broadcast(traceID)
 		}); err != nil {
 			log.Printf("redis subscribe error: %v", err)
 		}

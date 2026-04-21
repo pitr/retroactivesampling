@@ -155,7 +155,7 @@ func (*CoordinatorMessage_Decision) isCoordinatorMessage_Payload() {}
 
 type NotifyInteresting struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TraceId       string                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	TraceId       []byte                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -190,17 +190,16 @@ func (*NotifyInteresting) Descriptor() ([]byte, []int) {
 	return file_coordinator_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *NotifyInteresting) GetTraceId() string {
+func (x *NotifyInteresting) GetTraceId() []byte {
 	if x != nil {
 		return x.TraceId
 	}
-	return ""
+	return nil
 }
 
 type TraceDecision struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TraceId       string                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
-	Keep          bool                   `protobuf:"varint,2,opt,name=keep,proto3" json:"keep,omitempty"`
+	TraceId       []byte                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -235,18 +234,11 @@ func (*TraceDecision) Descriptor() ([]byte, []int) {
 	return file_coordinator_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *TraceDecision) GetTraceId() string {
+func (x *TraceDecision) GetTraceId() []byte {
 	if x != nil {
 		return x.TraceId
 	}
-	return ""
-}
-
-func (x *TraceDecision) GetKeep() bool {
-	if x != nil {
-		return x.Keep
-	}
-	return false
+	return nil
 }
 
 var File_coordinator_proto protoreflect.FileDescriptor
@@ -261,10 +253,9 @@ const file_coordinator_proto_rawDesc = "" +
 	"\bdecision\x18\x01 \x01(\v2\x1a.coordinator.TraceDecisionH\x00R\bdecisionB\t\n" +
 	"\apayload\".\n" +
 	"\x11NotifyInteresting\x12\x19\n" +
-	"\btrace_id\x18\x01 \x01(\tR\atraceId\">\n" +
+	"\btrace_id\x18\x01 \x01(\fR\atraceId\"*\n" +
 	"\rTraceDecision\x12\x19\n" +
-	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x12\n" +
-	"\x04keep\x18\x02 \x01(\bR\x04keep2\\\n" +
+	"\btrace_id\x18\x01 \x01(\fR\atraceId2\\\n" +
 	"\vCoordinator\x12M\n" +
 	"\aConnect\x12\x1d.coordinator.ProcessorMessage\x1a\x1f.coordinator.CoordinatorMessage(\x010\x01B#Z!pitr.ca/retroactivesampling/protob\x06proto3"
 

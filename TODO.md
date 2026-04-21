@@ -2,7 +2,7 @@
 
 ## Small items
 
-- [ ] optimize proto/coordinator.proto - use bytes instead of string, remove useless `keep`
+- [x] optimize proto/coordinator.proto - use bytes instead of string, remove useless `keep`
 - [ ] coordinator should try not to notify collector that gave it the message
 - [ ] ensure "2 interesting spans in same trace" is handled
 - [ ] track as a metric the average time span lives on disk, based on data in sweepOneLocked

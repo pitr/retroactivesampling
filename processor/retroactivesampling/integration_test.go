@@ -47,10 +47,10 @@ func (s *stubCoordinator) Connect(stream gen.Coordinator_ConnectServer) error {
 	}
 }
 
-func (s *stubCoordinator) broadcast(traceID string) {
+func (s *stubCoordinator) broadcast(traceID []byte) {
 	decision := &gen.CoordinatorMessage{
 		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: traceID, Keep: true},
+			Decision: &gen.TraceDecision{TraceId: traceID},
 		},
 	}
 	s.mu.Lock()

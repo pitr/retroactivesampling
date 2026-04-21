@@ -10,7 +10,6 @@ import (
 
 	gen "pitr.ca/retroactivesampling/proto"
 )
-
 type Counter interface{ Add(float64) }
 
 type Server struct {
@@ -54,16 +53,17 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 			s.bytesIn.Add(float64(proto.Size(msg)))
 		}
 		if n := msg.GetNotify(); n != nil {
-			s.onNotify(n.TraceId)
+			s.onNotify(hex.EncodeToString(n.TraceId))
 		}
 	}
 }
 
 // Broadcast sends keep decision to all connected processors. Best-effort.
-func (s *Server) Broadcast(traceID string, keep bool) {
+func (s *Server) Broadcast(traceID string) {
+	tid, _ := hex.DecodeString(traceID)
 	msg := &gen.CoordinatorMessage{
 		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: traceID, Keep: keep},
+			Decision: &gen.TraceDecision{TraceId: tid},
 		},
 	}
 	s.mu.Lock()

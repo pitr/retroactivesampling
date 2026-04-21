@@ -46,16 +46,17 @@ func (f *fakeCoordinator) Connect(stream gen.Coordinator_ConnectServer) error {
 		}
 		if n := msg.GetNotify(); n != nil {
 			f.mu.Lock()
-			f.notified = append(f.notified, n.TraceId)
+			f.notified = append(f.notified, hex.EncodeToString(n.TraceId))
 			f.mu.Unlock()
 		}
 	}
 }
 
-func (f *fakeCoordinator) sendDecision(traceID string, keep bool) {
+func (f *fakeCoordinator) sendDecision(traceID string) {
+	tid, _ := hex.DecodeString(traceID)
 	msg := &gen.CoordinatorMessage{
 		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: traceID, Keep: keep},
+			Decision: &gen.TraceDecision{TraceId: tid},
 		},
 	}
 	f.mu.Lock()
@@ -152,7 +153,7 @@ func TestCoordinatorPushCausesIngestion(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "coordinator stream should connect")
 
 	// Coordinator signals: keep this trace.
-	fc.sendDecision(tid3, true)
+	fc.sendDecision(tid3)
 	require.Eventually(t, func() bool {
 		return sink.SpanCount() == 1
 	}, 2*time.Second, 10*time.Millisecond, "coordinator push should trigger ingestion")

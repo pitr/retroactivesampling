@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"encoding/hex"
 	"time"
 
 	"go.uber.org/zap"
@@ -11,7 +12,7 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-type DecisionHandler func(traceID string, keep bool)
+type DecisionHandler func(traceID string)
 
 type Client struct {
 	endpoint string
@@ -98,8 +99,9 @@ func (c *Client) connect() error {
 				return
 			}
 			if d := msg.GetDecision(); d != nil {
-				c.logger.Debug("coordinator: received decision", zap.String("trace_id", d.TraceId), zap.Bool("keep", d.Keep))
-				c.handler(d.TraceId, d.Keep)
+				tid := hex.EncodeToString(d.TraceId)
+				c.logger.Debug("coordinator: received decision", zap.String("trace_id", tid))
+				c.handler(tid)
 			}
 		}
 	}()
@@ -107,10 +109,11 @@ func (c *Client) connect() error {
 	for {
 		select {
 		case traceID := <-c.sendCh:
+			tid, _ := hex.DecodeString(traceID)
 			c.logger.Debug("coordinator: sending notify", zap.String("trace_id", traceID))
 			if err := stream.Send(&gen.ProcessorMessage{
 				Payload: &gen.ProcessorMessage_Notify{
-					Notify: &gen.NotifyInteresting{TraceId: traceID},
+					Notify: &gen.NotifyInteresting{TraceId: tid},
 				},
 			}); err != nil {
 				c.logger.Error("coordinator: send failed", zap.String("trace_id", traceID), zap.Error(err))

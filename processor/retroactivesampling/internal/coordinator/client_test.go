@@ -1,6 +1,7 @@
 package coordinator_test
 
 import (
+	"encoding/hex"
 	"io"
 	"net"
 	"sync"
@@ -38,16 +39,17 @@ func (f *fakeServer) Connect(stream gen.Coordinator_ConnectServer) error {
 		}
 		if n := msg.GetNotify(); n != nil {
 			f.mu.Lock()
-			f.notified = append(f.notified, n.TraceId)
+			f.notified = append(f.notified, hex.EncodeToString(n.TraceId))
 			f.mu.Unlock()
 		}
 	}
 }
 
 func (f *fakeServer) broadcast(traceID string) {
+	tid, _ := hex.DecodeString(traceID)
 	msg := &gen.CoordinatorMessage{
 		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: traceID, Keep: true},
+			Decision: &gen.TraceDecision{TraceId: tid},
 		},
 	}
 	f.mu.Lock()
@@ -70,37 +72,34 @@ func startFakeServer(t *testing.T) (*fakeServer, string) {
 }
 
 func TestClientSendsNotification(t *testing.T) {
+	const traceHex = "aabbccdd99999999aabbccdd99999999"
 	srv, addr := startFakeServer(t)
-	received := make(chan string, 1)
-	c := coord.New(addr, func(traceID string, keep bool) { received <- traceID }, zap.NewNop())
+	c := coord.New(addr, func(traceID string) {}, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond) // connection establishment
-	c.Notify("trace-99")
+	c.Notify(traceHex)
 	time.Sleep(100 * time.Millisecond)
 
 	srv.mu.Lock()
 	notified := srv.notified
 	srv.mu.Unlock()
-	require.Contains(t, notified, "trace-99")
+	require.Contains(t, notified, traceHex)
 }
 
 func TestClientReceivesDecision(t *testing.T) {
+	const traceHex = "aabbccdd55555555aabbccdd55555555"
 	srv, addr := startFakeServer(t)
 	received := make(chan string, 1)
-	c := coord.New(addr, func(traceID string, keep bool) {
-		if keep {
-			received <- traceID
-		}
-	}, zap.NewNop())
+	c := coord.New(addr, func(traceID string) { received <- traceID }, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond)
-	srv.broadcast("trace-55")
+	srv.broadcast(traceHex)
 
 	select {
 	case id := <-received:
-		assert.Equal(t, "trace-55", id)
+		assert.Equal(t, traceHex, id)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for decision")
 	}
