@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"os"
+	"os/signal"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,7 +45,8 @@ func (c *counter) HandleRPC(_ context.Context, s stats.RPCStats) {
 func main() {
 	flag.Parse()
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	counter := &counter{}
 	tracers, providers := setup(ctx, strings.Split(*endpoints, ","), *svcCount, counter)
 	defer func() {
@@ -55,14 +58,33 @@ func main() {
 	go func() {
 		t := time.NewTicker(time.Duration(*reportFreq) * time.Second)
 		for range t.C {
-			fmt.Printf("out: %d B/s\n", counter.n.Swap(0)/int64(*reportFreq))
+			fmt.Println("out:", prettyRate(counter.n.Swap(0), int64(*reportFreq)))
 		}
 	}()
 
 	tick := time.NewTicker(time.Duration(float64(time.Second) / *rate))
 	defer tick.Stop()
-	for range tick.C {
-		go emit(ctx, tracers)
+	for {
+		select {
+		case <-tick.C:
+			go emit(ctx, tracers)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func prettyRate(bytes, secs int64) string {
+	bps := float64(bytes) / float64(secs)
+	switch {
+	case bps >= 1e9:
+		return fmt.Sprintf("%.1f GB/s", bps/1e9)
+	case bps >= 1e6:
+		return fmt.Sprintf("%.1f MB/s", bps/1e6)
+	case bps >= 1e3:
+		return fmt.Sprintf("%.1f KB/s", bps/1e3)
+	default:
+		return fmt.Sprintf("%.0f B/s", bps)
 	}
 }
 

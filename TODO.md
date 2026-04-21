@@ -10,7 +10,7 @@
 - [x] switch processor capability to MutatesData=false
 - [ ] cmd/tracegen struggles to generate high rate traffic beyond `-rate=1000 -service=20`
 - [x] migrate to range over `All()` when traversing telemetry data in processor
-- [ ] cmd/tracegen should shut down gracefully on ctrl-c
-- [ ] cmd/tracegen should print bytes out rate in a pretty way (kb/mb/gb if needed)
+- [x] cmd/tracegen should shut down gracefully on ctrl-c
+- [x] cmd/tracegen should print bytes out rate in a pretty way (kb/mb/gb if needed)
 
 ## Large items
