@@ -76,4 +76,4 @@ All other tests are unchanged — the public API (`New`, `WriteWithEviction`, `R
 
 ## Dependencies
 
-`golang.org/x/sys/unix` for `unix.Mmap`, `unix.Munmap`, `unix.Madvise` — already available in the Go ecosystem and works on both Linux (production) and macOS (development).
+`golang.org/x/sys/unix` for `unix.Mmap`, `unix.Munmap`, `unix.Madvise` — already present in `processor/retroactivesampling/go.mod` as an indirect dependency; this change promotes it to direct. Works on both Linux (production) and macOS (development).
