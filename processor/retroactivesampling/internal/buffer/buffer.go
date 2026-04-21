@@ -138,7 +138,6 @@ func (b *SpanBuffer) wrapLocked() {
 	remaining := b.maxBytes - b.wHead
 	if remaining >= hdrSize {
 		var hdr [hdrSize]byte
-		binary.BigEndian.PutUint64(hdr[32:40], 0)
 		binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
 		copy(b.data[b.wHead:], hdr[:])
 	}
