@@ -1,15 +1,25 @@
-.PHONY: build test test-integration lint proto collector clean
+.PHONY: build test test-integration lint proto collector clean generate
 
 COORDINATOR_BIN := bin/coordinator
-COLLECTOR_BIN   := bin/otelcol-retrosampling
 TRACEGEN_BIN    := bin/tracegen
+COLLECTOR_BIN   := bin/otelcol-retrosampling
 
-COORDINATOR_SRC := $(shell find coordinator -name '*.go')
-TRACEGEN_SRC    := $(shell find cmd/tracegen -name '*.go')
+COORDINATOR_SRC  := $(shell find coordinator -name '*.go')
+TRACEGEN_SRC     := $(shell find cmd/tracegen -name '*.go')
+PROCESSOR_SRC    := $(shell find processor/retroactivesampling -name '*.go')
+PROTO_GO_SRC     := $(shell find proto -name '*.go')
+
+METADATA_YAML      := processor/retroactivesampling/metadata.yaml
+GENERATED_METADATA := processor/retroactivesampling/internal/metadata/generated_status.go
+
+$(GENERATED_METADATA): $(METADATA_YAML)
+	cd processor/retroactivesampling && mdatagen metadata.yaml
+
+generate: $(GENERATED_METADATA)
 
 build: $(COORDINATOR_BIN) $(TRACEGEN_BIN)
 
-$(COORDINATOR_BIN): $(COORDINATOR_SRC) coordinator/go.mod coordinator/go.sum
+$(COORDINATOR_BIN): $(COORDINATOR_SRC) $(PROTO_GO_SRC) coordinator/go.mod coordinator/go.sum
 	go -C coordinator build -o ../$(COORDINATOR_BIN) .
 
 $(TRACEGEN_BIN): $(TRACEGEN_SRC) cmd/tracegen/go.mod cmd/tracegen/go.sum
@@ -25,12 +35,14 @@ test-integration:
 	go -C coordinator test -tags integration ./... -timeout 120s
 	go -C processor/retroactivesampling test -tags integration ./... -timeout 120s
 
-proto:
+proto: proto/coordinator.proto
 	protoc --go_out=proto --go_opt=paths=source_relative \
 	       --go-grpc_out=proto --go-grpc_opt=paths=source_relative \
 	       -I proto proto/coordinator.proto
 
-collector: example/build.yaml
+collector: $(COLLECTOR_BIN)
+
+$(COLLECTOR_BIN): example/build.yaml $(PROCESSOR_SRC) $(PROTO_GO_SRC)
 	GOWORK=off builder --config example/build.yaml
 
 lint:
@@ -40,6 +52,6 @@ lint:
 	cd cmd/tracegen && golangci-lint run ./...
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ data/
 
 .DEFAULT_GOAL := build
