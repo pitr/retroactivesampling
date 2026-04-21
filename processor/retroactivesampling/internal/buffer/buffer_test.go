@@ -258,3 +258,42 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
 }
+
+func TestReadAndDelete(t *testing.T) {
+	buf := newBuf(t)
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
+
+	got, ok, err := buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 1, got.SpanCount())
+
+	// Second call: entry gone.
+	_, ok, err = buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestReadAndDeleteMissing(t *testing.T) {
+	buf := newBuf(t)
+	_, ok, err := buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
+func TestReadAndDeleteMultipleDeltas(t *testing.T) {
+	buf := newBuf(t)
+	t1 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 50)
+	t2 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 60)
+	require.NoError(t, buf.WriteWithEviction(traceA, t1, time.Now()))
+	require.NoError(t, buf.WriteWithEviction(traceA, t2, time.Now()))
+
+	got, ok, err := buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, 2, got.SpanCount())
+
+	_, ok, _ = buf.ReadAndDelete(traceA)
+	assert.False(t, ok)
+}
