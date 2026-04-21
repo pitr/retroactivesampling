@@ -8,9 +8,10 @@ import (
 )
 
 type Config struct {
-	GRPCListen    string        `yaml:"grpc_listen"`
-	RedisAddr     string        `yaml:"redis_addr"`
-	DecidedKeyTTL time.Duration `yaml:"decided_key_ttl"`
+	GRPCListen     string        `yaml:"grpc_listen"`
+	RedisAddr      string        `yaml:"redis_addr"`
+	DecidedKeyTTL  time.Duration `yaml:"decided_key_ttl"`
+	MetricsListen  string        `yaml:"metrics_listen"`
 }
 
 func loadConfig(path string) (*Config, error) {

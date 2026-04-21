@@ -6,20 +6,28 @@ import (
 	"io"
 	"sync"
 
+	"google.golang.org/protobuf/proto"
+
 	gen "pitr.ca/retroactivesampling/proto"
 )
+
+type Counter interface{ Add(float64) }
 
 type Server struct {
 	gen.UnimplementedCoordinatorServer
 	mu       sync.Mutex
 	streams  map[string]gen.Coordinator_ConnectServer
 	onNotify func(traceID string)
+	bytesIn  Counter
+	bytesOut Counter
 }
 
-func New(onNotify func(traceID string)) *Server {
+func New(onNotify func(traceID string), bytesIn, bytesOut Counter) *Server {
 	return &Server{
 		streams:  make(map[string]gen.Coordinator_ConnectServer),
 		onNotify: onNotify,
+		bytesIn:  bytesIn,
+		bytesOut: bytesOut,
 	}
 }
 
@@ -42,6 +50,9 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 		if err != nil {
 			return err
 		}
+		if s.bytesIn != nil {
+			s.bytesIn.Add(float64(proto.Size(msg)))
+		}
 		if n := msg.GetNotify(); n != nil {
 			s.onNotify(n.TraceId)
 		}
@@ -57,8 +68,12 @@ func (s *Server) Broadcast(traceID string, keep bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	n := proto.Size(msg)
 	for _, stream := range s.streams {
 		_ = stream.Send(msg)
+	}
+	if s.bytesOut != nil {
+		s.bytesOut.Add(float64(n * len(s.streams)))
 	}
 }
 

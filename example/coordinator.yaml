@@ -1,3 +1,4 @@
 grpc_listen: :9090
 redis_addr: localhost:6379
 decided_key_ttl: 60s
+metrics_listen: :9091

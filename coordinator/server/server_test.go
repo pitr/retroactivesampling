@@ -28,7 +28,7 @@ func startServer(t *testing.T, s *server.Server) string {
 
 func TestBroadcastToConnectedProcessors(t *testing.T) {
 	notified := make(chan string, 1)
-	srv := server.New(func(traceID string) { notified <- traceID })
+	srv := server.New(func(traceID string) { notified <- traceID }, nil, nil)
 	addr := startServer(t, srv)
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))

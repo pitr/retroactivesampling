@@ -5,11 +5,14 @@ import (
 	"flag"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
 	gen "pitr.ca/retroactivesampling/proto"
@@ -36,6 +39,27 @@ func main() {
 		log.Fatal("decided_key_ttl is required")
 	}
 
+	bytesIn := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "coordinator_grpc_bytes_received_total",
+		Help: "Total bytes received from processors via gRPC.",
+	})
+	bytesOut := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "coordinator_grpc_bytes_sent_total",
+		Help: "Total bytes sent to processors via gRPC.",
+	})
+	prometheus.MustRegister(bytesIn, bytesOut)
+
+	if cfg.MetricsListen != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		go func() {
+			log.Printf("metrics listening on %s", cfg.MetricsListen)
+			if err := http.ListenAndServe(cfg.MetricsListen, mux); err != nil {
+				log.Printf("metrics server: %v", err)
+			}
+		}()
+	}
+
 	ps := rds.New(cfg.RedisAddr, cfg.DecidedKeyTTL)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -49,7 +73,7 @@ func main() {
 		if !ok {
 			return // duplicate, already broadcast by another instance
 		}
-	})
+	}, bytesIn, bytesOut)
 
 	// All coordinators (including this one) subscribe to the Redis channel.
 	// When this instance publishes a trace ID, it arrives back via Subscribe
