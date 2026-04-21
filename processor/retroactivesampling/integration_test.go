@@ -74,7 +74,7 @@ func startCoordinator(t *testing.T) string {
 func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
 	cfg := &proc.Config{
-		BufferDir:               t.TempDir(),
+		BufferFile:              t.TempDir() + "/buffer.bin",
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     coordAddr,
