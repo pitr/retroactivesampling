@@ -117,7 +117,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	}
 
 	for b.used+recSize > b.maxBytes {
-		if err := b.sweepOneLocked(); err != nil {
+		if err := b.sweepOneLocked(insertedAt); err != nil {
 			return err
 		}
 	}
@@ -148,7 +148,7 @@ func (b *SpanBuffer) wrapLocked() {
 	b.wHead = 0
 }
 
-func (b *SpanBuffer) sweepOneLocked() error {
+func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
 	if b.rHead >= b.maxBytes {
 		b.rHead = 0
 	}
@@ -174,7 +174,7 @@ func (b *SpanBuffer) sweepOneLocked() error {
 	traceID := string(bytes.TrimRight(hdr[:32], "\x00"))
 	if deltas, ok := b.entries[traceID]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
 		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[32:40])))
-		b.evictObserver(time.Since(insertedAt))
+		b.evictObserver(now.Sub(insertedAt))
 		b.entries[traceID] = deltas[1:]
 		if len(b.entries[traceID]) == 0 {
 			delete(b.entries, traceID)

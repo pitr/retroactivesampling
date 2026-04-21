@@ -68,6 +68,7 @@ func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 
 func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces) (ptrace.Traces, error) {
 	out := ptrace.NewTraces()
+	now := time.Now()
 	for traceID, spans := range groupByTrace(td) {
 		if p.ic.Has(traceID) {
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
@@ -77,7 +78,7 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 			p.ingestInteresting(traceID, spans)
 			continue
 		}
-		if err := p.buf.WriteWithEviction(traceID, spans, time.Now()); err != nil {
+		if err := p.buf.WriteWithEviction(traceID, spans, now); err != nil {
 			p.logger.Error("buffer full after eviction", zap.String("trace_id", traceID), zap.Error(err))
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
