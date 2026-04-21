@@ -4,8 +4,7 @@
 
 - [ ] cmd/tracegen struggles to generate high rate traffic beyond `-rate=10000 -service=20`
 - [ ] update readme with development section (what processes to run, how to install necessary tools like otelcol builder, how to run tests, etc)
-- [x] coordinator should have graceful shut down (and not print `publish X: context canceled` forever)
-- [ ] see if we can get rid of go.work in the root. Either replace it with go.mod or not have it at all, depending which works best for a go project like this.
+- [x] see if we can get rid of go.work in the root. Either replace it with go.mod or not have it at all, depending which works best for a go project like this.
 
 ## Large items
 
