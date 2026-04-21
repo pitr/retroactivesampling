@@ -209,36 +209,6 @@ func (b *SpanBuffer) madviseSwept() {
 	}
 }
 
-func (b *SpanBuffer) Read(traceID string) (ptrace.Traces, bool, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	deltas := b.entries[traceID]
-	if len(deltas) == 0 {
-		return ptrace.Traces{}, false, nil
-	}
-
-	u := ptrace.ProtoUnmarshaler{}
-	result := ptrace.NewTraces()
-	for _, d := range deltas {
-		buf := make([]byte, d.size)
-		copy(buf, b.data[d.offset+hdrSize:])
-		t, err := u.UnmarshalTraces(buf)
-		if err != nil {
-			return ptrace.Traces{}, false, err
-		}
-		t.ResourceSpans().MoveAndAppendTo(result.ResourceSpans())
-	}
-	return result, true, nil
-}
-
-func (b *SpanBuffer) Delete(traceID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.entries, traceID)
-	return nil
-}
-
 func (b *SpanBuffer) ReadAndDelete(traceID string) (ptrace.Traces, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

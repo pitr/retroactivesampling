@@ -76,39 +76,6 @@ func TestNewRejectsZeroMaxBytes(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestWriteAndRead(t *testing.T) {
-	buf := newBuf(t)
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-
-	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
-
-	got, ok, err := buf.Read(traceA)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, 1, got.SpanCount())
-}
-
-func TestWriteAppendsSpans(t *testing.T) {
-	buf := newBuf(t)
-	t1 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 50)
-	t2 := singleSpanTraces(traceA, ptrace.StatusCodeOk, 60)
-
-	require.NoError(t, buf.WriteWithEviction(traceA, t1, time.Now()))
-	require.NoError(t, buf.WriteWithEviction(traceA, t2, time.Now()))
-
-	got, ok, err := buf.Read(traceA)
-	require.NoError(t, err)
-	require.True(t, ok)
-	assert.Equal(t, 2, got.SpanCount())
-}
-
-func TestReadMissingTrace(t *testing.T) {
-	buf := newBuf(t)
-	_, ok, err := buf.Read(traceA)
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
 func TestEviction(t *testing.T) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 	rs := recSize(t, tr)
@@ -118,9 +85,9 @@ func TestEviction(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
 
-	_, ok, _ := buf.Read(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted")
-	_, ok, _ = buf.Read(traceB)
+	_, ok, _ = buf.ReadAndDelete(traceB)
 	assert.True(t, ok, "traceB should be present")
 }
 
@@ -134,12 +101,12 @@ func TestPartialDeltaEviction(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 200), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
 
-	got, ok, err := buf.Read(traceA)
+	got, ok, err := buf.ReadAndDelete(traceA)
 	require.NoError(t, err)
 	require.True(t, ok, "traceA should still be readable via its second delta")
 	assert.Equal(t, 1, got.SpanCount())
 
-	got, ok, err = buf.Read(traceB)
+	got, ok, err = buf.ReadAndDelete(traceB)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
@@ -156,54 +123,18 @@ func TestWrap(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceC, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
 
-	_, ok, _ := buf.Read(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted after wrap")
 
-	got, ok, err := buf.Read(traceB)
+	got, ok, err := buf.ReadAndDelete(traceB)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
 
-	got, ok, err = buf.Read(traceC)
+	got, ok, err = buf.ReadAndDelete(traceC)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
-}
-
-func TestDelete(t *testing.T) {
-	buf := newBuf(t)
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-
-	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
-	require.NoError(t, buf.Delete(traceA))
-
-	_, ok, err := buf.Read(traceA)
-	require.NoError(t, err)
-	assert.False(t, ok)
-}
-
-func TestDeleteNonExistent(t *testing.T) {
-	buf := newBuf(t)
-	assert.NoError(t, buf.Delete(traceA))
-}
-
-func TestDeleteOrphanSweptOnNextWrite(t *testing.T) {
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-	rs := recSize(t, tr)
-	buf := newBufSize(t, rs)
-
-	now := time.Now()
-	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
-	require.NoError(t, buf.Delete(traceA))
-
-	// Ring used=rs. Writing traceB triggers sweep of orphaned traceA record.
-	// sweepOneLocked sees traceA in ring but not in entries — just advances rHead.
-	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
-
-	_, ok, _ := buf.Read(traceA)
-	assert.False(t, ok)
-	_, ok, _ = buf.Read(traceB)
-	assert.True(t, ok)
 }
 
 func TestEvictionObserverCalledForLiveRecord(t *testing.T) {
@@ -223,22 +154,6 @@ func TestEvictionObserverCalledForLiveRecord(t *testing.T) {
 	assert.Greater(t, observed[0], time.Duration(0), "observed duration must be positive")
 }
 
-func TestEvictionObserverNotCalledForOrphans(t *testing.T) {
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-	rs := recSize(t, tr)
-
-	var count int
-	buf := newBufSizeWithObserver(t, rs, func(time.Duration) { count++ })
-
-	now := time.Now()
-	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
-	require.NoError(t, buf.Delete(traceA))
-	// sweepOneLocked will see traceA in ring but not in entries (orphaned).
-	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
-
-	assert.Equal(t, 0, count, "observer must not fire for orphaned records")
-}
-
 func TestWrapWithSkipRecord(t *testing.T) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 	rs := recSize(t, tr)
@@ -250,10 +165,10 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceC, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
 
-	_, ok, _ := buf.Read(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted after wrap with skip record")
 
-	got, ok, err := buf.Read(traceC)
+	got, ok, err := buf.ReadAndDelete(traceC)
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 1, got.SpanCount())
