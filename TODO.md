@@ -12,9 +12,11 @@
 - [x] migrate to range over `All()` when traversing telemetry data in processor
 - [x] cmd/tracegen should shut down gracefully on ctrl-c
 - [x] cmd/tracegen should print bytes out rate in a pretty way (kb/mb/gb if needed)
-- [ ] check if cache needs to do `lru.MoveToFront()`
+- [x] check if cache needs to do `lru.MoveToFront()`
 - [ ] add golangci-lint to makefile, fix any issues
 - [ ] update readme with development section (what processes to run, how to install necessary tools like otelcol builder, how to run tests, etc)
+- [ ] optimize groupByTrace in split.go
+- [ ] retroactive_sampling_buffer_span_age_on_eviction metric should have bucket_boundaries that able to catch ms values as well as up to 1 minute values. It should also probably be int, not float.
 
 ## Large items
 

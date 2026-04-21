@@ -1,4 +1,4 @@
-.PHONY: build test test-integration proto collector clean
+.PHONY: build test test-integration lint proto collector clean
 
 COORDINATOR_BIN := bin/coordinator
 COLLECTOR_BIN   := bin/otelcol-retrosampling
@@ -32,6 +32,12 @@ proto:
 
 collector: example/build.yaml
 	GOWORK=off builder --config example/build.yaml
+
+lint:
+	cd proto && golangci-lint run ./...
+	cd coordinator && golangci-lint run ./...
+	cd processor/retroactivesampling && golangci-lint run ./...
+	cd cmd/tracegen && golangci-lint run ./...
 
 clean:
 	rm -rf bin/

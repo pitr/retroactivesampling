@@ -82,7 +82,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	stream, err := gen.NewCoordinatorClient(conn).Connect(c.ctx)
 	if err != nil {

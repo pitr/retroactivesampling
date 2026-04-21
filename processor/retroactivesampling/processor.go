@@ -43,7 +43,7 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	}
 	chain, err := evaluator.Build(cfg.Rules)
 	if err != nil {
-		buf.Close()
+		_ = buf.Close()
 		tb.Shutdown()
 		return nil, err
 	}

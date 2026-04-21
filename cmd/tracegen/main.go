@@ -51,7 +51,7 @@ func main() {
 	tracers, providers := setup(ctx, strings.Split(*endpoints, ","), *svcCount, counter)
 	defer func() {
 		for _, tp := range providers {
-			tp.Shutdown(ctx)
+			_ = tp.Shutdown(ctx)
 		}
 	}()
 

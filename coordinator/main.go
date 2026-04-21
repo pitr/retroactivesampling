@@ -65,13 +65,8 @@ func main() {
 	defer cancel()
 
 	srv := server.New(func(traceID string) {
-		ok, err := ps.Publish(ctx, traceID)
-		if err != nil {
+		if _, err := ps.Publish(ctx, traceID); err != nil {
 			log.Printf("publish %s: %v", traceID, err)
-			return
-		}
-		if !ok {
-			return // duplicate, already broadcast by another instance
 		}
 	}, bytesIn, bytesOut)
 

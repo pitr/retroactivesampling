@@ -55,18 +55,18 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	if info.Size() < maxBytes {
 		if err := f.Truncate(maxBytes); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, err
 		}
 	}
 	data, err := unix.Mmap(int(f.Fd()), 0, int(maxBytes), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	_ = unix.Madvise(data, unix.MADV_SEQUENTIAL)
@@ -91,7 +91,7 @@ func (b *SpanBuffer) Close() error {
 	b.f = nil
 	b.mu.Unlock()
 	if err := unix.Munmap(data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()

@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -31,9 +32,15 @@ func New(addr string, ttl time.Duration) *PubSub {
 // For this system's best-effort semantics this is acceptable.
 func (p *PubSub) Publish(ctx context.Context, traceID string) (bool, error) {
 	key := fmt.Sprintf(decidedKeyFmt, traceID)
-	ok, err := p.client.SetNX(ctx, key, 1, p.ttl).Result()
-	if err != nil || !ok {
+	result, err := p.client.SetArgs(ctx, key, 1, redis.SetArgs{TTL: p.ttl, Mode: "NX"}).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil // key already existed
+	}
+	if err != nil {
 		return false, err
+	}
+	if result != "OK" {
+		return false, nil // key already existed (nil bulk → empty string path)
 	}
 	return true, p.client.Publish(ctx, channel, traceID).Err()
 }
@@ -41,7 +48,7 @@ func (p *PubSub) Publish(ctx context.Context, traceID string) (bool, error) {
 // Subscribe calls handler for each traceID received. Blocks until ctx is cancelled.
 func (p *PubSub) Subscribe(ctx context.Context, handler func(traceID string)) error {
 	sub := p.client.Subscribe(ctx, channel)
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 	for {
 		select {
 		case msg := <-sub.Channel():
