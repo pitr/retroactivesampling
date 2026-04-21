@@ -11,11 +11,9 @@ type LatencyEvaluator struct {
 }
 
 func (e *LatencyEvaluator) Evaluate(t ptrace.Traces) bool {
-	for i := 0; i < t.ResourceSpans().Len(); i++ {
-		for j := 0; j < t.ResourceSpans().At(i).ScopeSpans().Len(); j++ {
-			ss := t.ResourceSpans().At(i).ScopeSpans().At(j)
-			for k := 0; k < ss.Spans().Len(); k++ {
-				span := ss.Spans().At(k)
+	for _, rs := range t.ResourceSpans().All() {
+		for _, ss := range rs.ScopeSpans().All() {
+			for _, span := range ss.Spans().All() {
 				d := span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime())
 				if d >= e.Threshold {
 					return true

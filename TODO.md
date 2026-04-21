@@ -9,6 +9,6 @@
 - [x] replace buffer_dir in processor config with buffer_file or something, since we only ever need a single file
 - [x] switch processor capability to MutatesData=false
 - [ ] cmd/tracegen struggles to generate high rate traffic beyond `-rate=1000 -service=20`
-- [ ] migrate to range over `All()` when traversing telemetry data in processor
+- [x] migrate to range over `All()` when traversing telemetry data in processor
 
 ## Large items
