@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func makeTraceWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Tra
 func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
 	cfg := &processor.Config{
-		BufferDir:               t.TempDir(),
+		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     addr,

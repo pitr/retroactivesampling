@@ -5,7 +5,7 @@ import (
 )
 
 type Config struct {
-	BufferDir               string                 `mapstructure:"buffer_dir"`
+	BufferFile              string                 `mapstructure:"buffer_file"`
 	MaxBufferBytes          int64                  `mapstructure:"max_buffer_bytes"`
 	MaxInterestCacheEntries int                    `mapstructure:"max_interest_cache_entries"`
 	CoordinatorEndpoint     string                 `mapstructure:"coordinator_endpoint"`

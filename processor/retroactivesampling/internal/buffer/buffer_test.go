@@ -1,6 +1,8 @@
 package buffer_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -48,14 +50,25 @@ func newBuf(t *testing.T) *buffer.SpanBuffer {
 
 func newBufSize(t *testing.T, maxBytes int64) *buffer.SpanBuffer {
 	t.Helper()
-	buf, err := buffer.New(t.TempDir(), maxBytes)
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
 }
 
+func TestNewCreatesFileAtPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spans.ring")
+	buf, err := buffer.New(path, 1<<20)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.False(t, info.IsDir(), "buffer path must be a regular file, not a directory")
+}
+
 func TestNewRejectsZeroMaxBytes(t *testing.T) {
-	_, err := buffer.New(t.TempDir(), 0)
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 0)
 	assert.Error(t, err)
 }
 

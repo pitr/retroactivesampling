@@ -27,7 +27,7 @@ type retroactiveProcessor struct {
 
 func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
 	ic := cache.New(cfg.MaxInterestCacheEntries)
-	buf, err := buffer.New(cfg.BufferDir, cfg.MaxBufferBytes)
+	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes)
 	if err != nil {
 		return nil, err
 	}

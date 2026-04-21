@@ -10,7 +10,7 @@ receivers:
 
 processors:
   retroactive_sampling:
-    buffer_dir: ./data/retrosampling1
+    buffer_file: ./data/retrosampling1.ring
     max_buffer_bytes: 10485760  # 10 MB
     coordinator_endpoint: localhost:9090
     rules:

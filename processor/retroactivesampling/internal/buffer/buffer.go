@@ -27,7 +27,6 @@ type deltaRecord struct {
 }
 
 type SpanBuffer struct {
-	dir         string
 	maxBytes    int64
 	f           *os.File
 	data        []byte
@@ -39,14 +38,14 @@ type SpanBuffer struct {
 	mu          sync.Mutex
 }
 
-func New(dir string, maxBytes int64) (*SpanBuffer, error) {
+func New(file string, maxBytes int64) (*SpanBuffer, error) {
 	if maxBytes <= 0 {
 		return nil, fmt.Errorf("maxBytes must be positive, got %d", maxBytes)
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "buffer.ring"), os.O_RDWR|os.O_CREATE, 0600)
+	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +67,6 @@ func New(dir string, maxBytes int64) (*SpanBuffer, error) {
 	}
 	_ = unix.Madvise(data, unix.MADV_SEQUENTIAL)
 	return &SpanBuffer{
-		dir:      dir,
 		maxBytes: maxBytes,
 		f:        f,
 		data:     data,
