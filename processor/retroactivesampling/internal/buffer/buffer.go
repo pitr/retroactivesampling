@@ -247,7 +247,6 @@ func (b *SpanBuffer) ReadAndDelete(traceID string) (ptrace.Traces, bool, error) 
 	if len(deltas) == 0 {
 		return ptrace.Traces{}, false, nil
 	}
-	delete(b.entries, traceID)
 
 	u := ptrace.ProtoUnmarshaler{}
 	result := ptrace.NewTraces()
@@ -260,5 +259,6 @@ func (b *SpanBuffer) ReadAndDelete(traceID string) (ptrace.Traces, bool, error) 
 		}
 		t.ResourceSpans().MoveAndAppendTo(result.ResourceSpans())
 	}
+	delete(b.entries, traceID)
 	return result, true, nil
 }
