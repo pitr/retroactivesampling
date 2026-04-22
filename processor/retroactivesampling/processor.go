@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
@@ -18,13 +19,15 @@ import (
 )
 
 type retroactiveProcessor struct {
-	logger    *zap.Logger
-	next      consumer.Traces
-	buf       *buffer.SpanBuffer
-	ic        *cache.InterestCache
-	eval      evaluator.Evaluator
-	coord     *coord.Client
-	telemetry *metadata.TelemetryBuilder
+	logger      *zap.Logger
+	next        consumer.Traces
+	buf         *buffer.SpanBuffer
+	ic          *cache.InterestCache
+	eval        evaluator.Evaluator
+	coord       *coord.Client
+	telemetry   *metadata.TelemetryBuilder
+	grpcCfg     configgrpc.ClientConfig
+	telSettings component.TelemetrySettings
 }
 
 func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Traces) (*retroactiveProcessor, error) {
@@ -47,20 +50,27 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 		tb.Shutdown()
 		return nil, err
 	}
-	p := &retroactiveProcessor{
-		logger:    set.Logger,
-		next:      next,
-		buf:       buf,
-		ic:        ic,
-		eval:      chain,
-		telemetry: tb,
-	}
-	p.coord = coord.New(cfg.CoordinatorEndpoint, p.onDecision, set.Logger)
-	return p, nil
+	return &retroactiveProcessor{
+		logger:      set.Logger,
+		next:        next,
+		buf:         buf,
+		ic:          ic,
+		eval:        chain,
+		telemetry:   tb,
+		grpcCfg:     cfg.CoordinatorGRPC,
+		telSettings: set,
+	}, nil
+}
+
+func (p *retroactiveProcessor) Start(_ context.Context, host component.Host) error {
+	p.coord = coord.New(p.grpcCfg, host, p.telSettings, p.onDecision, p.logger)
+	return nil
 }
 
 func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
-	p.coord.Close()
+	if p.coord != nil {
+		p.coord.Close()
+	}
 	err := p.buf.Close()
 	p.telemetry.Shutdown()
 	return err

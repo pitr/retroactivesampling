@@ -10,6 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configgrpc"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
@@ -71,10 +75,17 @@ func startFakeServer(t *testing.T) (*fakeServer, string) {
 	return srv, lis.Addr().String()
 }
 
+func insecureGRPCConfig(addr string) configgrpc.ClientConfig {
+	return configgrpc.ClientConfig{
+		Endpoint:   addr,
+		TLS: configtls.ClientConfig{Insecure: true},
+	}
+}
+
 func TestClientSendsNotification(t *testing.T) {
 	const traceHex = "aabbccdd99999999aabbccdd99999999"
 	srv, addr := startFakeServer(t)
-	c := coord.New(addr, func(traceID string) {}, zap.NewNop())
+	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(string) {}, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond) // connection establishment
@@ -91,7 +102,7 @@ func TestClientReceivesDecision(t *testing.T) {
 	const traceHex = "aabbccdd55555555aabbccdd55555555"
 	srv, addr := startFakeServer(t)
 	received := make(chan string, 1)
-	c := coord.New(addr, func(traceID string) { received <- traceID }, zap.NewNop())
+	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(traceID string) { received <- traceID }, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond)

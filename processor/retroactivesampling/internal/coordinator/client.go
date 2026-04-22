@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"time"
 
+	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	gen "pitr.ca/retroactivesampling/proto"
 )
@@ -15,7 +15,9 @@ import (
 type DecisionHandler func(traceID string)
 
 type Client struct {
-	endpoint string
+	grpcCfg  configgrpc.ClientConfig
+	host     component.Host
+	settings component.TelemetrySettings
 	handler  DecisionHandler
 	sendCh   chan string
 	ctx      context.Context
@@ -24,10 +26,12 @@ type Client struct {
 	done     chan struct{}
 }
 
-func New(endpoint string, handler DecisionHandler, logger *zap.Logger) *Client {
+func New(grpcCfg configgrpc.ClientConfig, host component.Host, settings component.TelemetrySettings, handler DecisionHandler, logger *zap.Logger) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		endpoint: endpoint,
+		grpcCfg:  grpcCfg,
+		host:     host,
+		settings: settings,
 		handler:  handler,
 		sendCh:   make(chan string, 256),
 		ctx:      ctx,
@@ -58,7 +62,7 @@ func (c *Client) run() {
 			return
 		default:
 		}
-		c.logger.Info("coordinator: connecting", zap.String("endpoint", c.endpoint))
+		c.logger.Info("coordinator: connecting", zap.String("endpoint", c.grpcCfg.Endpoint))
 		if err := c.connect(); err != nil {
 			c.logger.Warn("coordinator: connection lost, retrying", zap.Error(err), zap.Duration("backoff", backoff))
 			select {
@@ -77,8 +81,7 @@ func (c *Client) run() {
 }
 
 func (c *Client) connect() error {
-	conn, err := grpc.NewClient(c.endpoint,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := c.grpcCfg.ToClientConn(c.ctx, c.host.GetExtensions(), c.settings)
 	if err != nil {
 		return err
 	}
@@ -88,7 +91,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
-	c.logger.Info("coordinator: stream established", zap.String("endpoint", c.endpoint))
+	c.logger.Info("coordinator: stream established", zap.String("endpoint", c.grpcCfg.Endpoint))
 
 	recvErr := make(chan error, 1)
 	go func() {

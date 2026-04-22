@@ -4,7 +4,8 @@ tests:
   config:
     buffer_file: /tmp/retrosampling-lifecycle-test.ring
     max_buffer_bytes: 1048576
-    coordinator_endpoint: "127.0.0.1:4317"
+    coordinator_grpc:
+      endpoint: "127.0.0.1:4317"
 
 status:
   class: processor

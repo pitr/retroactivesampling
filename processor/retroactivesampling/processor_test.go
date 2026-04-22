@@ -12,6 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configgrpc"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -78,6 +81,13 @@ func startFakeCoordinator(t *testing.T) (*fakeCoordinator, string) {
 	return fc, lis.Addr().String()
 }
 
+func insecureGRPCConfig(addr string) configgrpc.ClientConfig {
+	return configgrpc.ClientConfig{
+		Endpoint:   addr,
+		TLS: configtls.ClientConfig{Insecure: true},
+	}
+}
+
 func makeTraceWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Traces {
 	td := ptrace.NewTraces()
 	span := td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty()
@@ -102,7 +112,7 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
-		CoordinatorEndpoint:     addr,
+		CoordinatorGRPC:         insecureGRPCConfig(addr),
 		Policies:                []evaluator.PolicyCfg{p},
 	}
 	factory := processor.NewFactory()
@@ -113,7 +123,7 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 		sink,
 	)
 	require.NoError(t, err)
-	require.NoError(t, proc.Start(context.Background(), nil))
+	require.NoError(t, proc.Start(context.Background(), componenttest.NewNopHost()))
 	t.Cleanup(func() { _ = proc.Shutdown(context.Background()) })
 	return proc
 }
@@ -282,7 +292,7 @@ func TestProbabilistic_NoCoordinatorNotify(t *testing.T) {
 		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
-		CoordinatorEndpoint:     addr,
+		CoordinatorGRPC:         insecureGRPCConfig(addr),
 		Policies:                []evaluator.PolicyCfg{p},
 	}
 	factory := processor.NewFactory()
@@ -293,7 +303,7 @@ func TestProbabilistic_NoCoordinatorNotify(t *testing.T) {
 		sink,
 	)
 	require.NoError(t, err)
-	require.NoError(t, proc.Start(context.Background(), nil))
+	require.NoError(t, proc.Start(context.Background(), componenttest.NewNopHost()))
 	t.Cleanup(func() { _ = proc.Shutdown(context.Background()) })
 
 	trace := makeTraceWithStatus("aabbccdd11111111aabbccdd11111111", ptrace.StatusCodeOk)

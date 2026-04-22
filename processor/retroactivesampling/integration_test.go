@@ -12,12 +12,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configgrpc"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/consumer/consumertest"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	otelprocessor "go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/processortest"
 	"google.golang.org/grpc"
-	otelprocessor "go.opentelemetry.io/collector/processor"
 
 	gen "pitr.ca/retroactivesampling/proto"
 	proc "pitr.ca/retroactivesampling/processor/retroactivesampling"
@@ -77,7 +80,10 @@ func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSi
 		BufferFile:              t.TempDir() + "/buffer.bin",
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
-		CoordinatorEndpoint:     coordAddr,
+		CoordinatorGRPC: configgrpc.ClientConfig{
+			Endpoint:   coordAddr,
+			TLS: configtls.ClientConfig{Insecure: true},
+		},
 		Policies: []evaluator.PolicyCfg{{
 			SharedPolicyCfg: evaluator.SharedPolicyCfg{
 				Type:          evaluator.StatusCode,
@@ -93,7 +99,7 @@ func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSi
 		sink,
 	)
 	require.NoError(t, err)
-	require.NoError(t, p.Start(context.Background(), nil))
+	require.NoError(t, p.Start(context.Background(), componenttest.NewNopHost()))
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
 	return p
 }
