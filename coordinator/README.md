@@ -35,6 +35,17 @@ metrics_listen: :9091     # Prometheus metrics endpoint (optional)
 bin/coordinator --config coordinator.yaml
 ```
 
+## Performance
+
+The coordinator receives far less traffic than the collector fleet — multiple orders of magnitude less. Collectors notify the coordinator only once per *interesting* trace (not per span), so coordinator inbound scales with the interesting-trace rate `I`, not the raw span rate:
+
+```
+fleet inbound:        I × message_size   (~200 KB/s at I=10k, 20 B/message)
+per coordinator:      I × message_size / coordinator_count
+```
+
+Outbound broadcast to processors is the dominant cost and scales with `I × collector_count`. See [PERFORMANCE.md](../PERFORMANCE.md) for full traffic formulas, scaling risks, and worked examples.
+
 ## High Availability
 
 Run multiple instances behind any load balancer (round-robin). Each instance subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
