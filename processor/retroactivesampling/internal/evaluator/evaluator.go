@@ -2,18 +2,31 @@ package evaluator
 
 import "go.opentelemetry.io/collector/pdata/ptrace"
 
+type Decision uint8
+
+const (
+	NotSampled  Decision = iota
+	Sampled              // interesting — notify coordinator
+	SampledLocal         // interesting — skip coordinator (deterministic by trace ID)
+	Dropped              // halt chain, do not sample
+)
+
 type Evaluator interface {
-	Evaluate(ptrace.Traces) bool
+	Evaluate(ptrace.Traces) (Decision, error)
 }
 
-// Chain evaluates each Evaluator in order; returns true on first match (OR logic).
+// Chain evaluates policies in order; halts on first non-NotSampled or error.
 type Chain []Evaluator
 
-func (c Chain) Evaluate(t ptrace.Traces) bool {
+func (c Chain) Evaluate(t ptrace.Traces) (Decision, error) {
 	for _, e := range c {
-		if e.Evaluate(t) {
-			return true
+		d, err := e.Evaluate(t)
+		if err != nil {
+			return NotSampled, err
+		}
+		if d != NotSampled {
+			return d, nil
 		}
 	}
-	return false
+	return NotSampled, nil
 }
