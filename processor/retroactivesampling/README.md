@@ -49,6 +49,22 @@ processors:
 | `coordinator_endpoint` | yes | — | `host:port` of coordinator gRPC server |
 | `policies` | yes | — | List of sampling policies (evaluated with OR logic; first match wins) |
 
+### Tuning `max_buffer_bytes`
+
+Controls how long unsampled traces remain available for retroactive ingestion. Size it based on your per-collector pre-sampling span ingestion rate (all spans, before any sampling decision) and the window you want:
+
+```
+max_buffer_bytes = pre_sampling_ingestion_rate_bytes/s × desired_retention_seconds
+```
+
+Example: 50 MB/s pre-sampling ingestion rate, 30-second window → `1_500_000_000` (≈ 1.5 GiB).
+
+A larger buffer increases the chance that a coordinator keep decision arrives before the relevant spans are evicted, at the cost of more disk usage. Traces are evicted oldest-first when the limit is reached. Provision at least this much free disk space on each collector host.
+
+### Tuning `max_interest_cache_entries`
+
+This is an in-memory cache of trace IDs for which a keep decision has already been received. When a span arrives for a cached trace ID it is forwarded immediately without a buffer lookup. The default (`100000`) covers most deployments. Increase it only if you observe cache eviction causing repeated buffer lookups under high interesting-trace throughput.
+
 ## Policies
 
 Policies are evaluated in order with OR logic — first match wins.
