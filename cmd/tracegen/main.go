@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"os"
 	"os/signal"
@@ -62,12 +63,19 @@ func main() {
 		}
 	}()
 
-	tick := time.NewTicker(time.Duration(float64(time.Second) / *rate))
+	// Batch multiple emits per tick: OS timer fires at most ~1000x/sec.
+	const timerHz = 1000.0
+	batchSize := int(math.Ceil(*rate / timerHz))
+	tickInterval := time.Duration(float64(time.Second) / *rate * float64(batchSize))
+
+	tick := time.NewTicker(tickInterval)
 	defer tick.Stop()
 	for {
 		select {
 		case <-tick.C:
-			go emit(ctx, tracers)
+			for range batchSize {
+				go emit(ctx, tracers)
+			}
 		case <-ctx.Done():
 			return
 		}
