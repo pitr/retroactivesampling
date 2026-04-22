@@ -110,7 +110,9 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 
 func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.Traces) {
 	p.ic.Add(traceID)
-	p.coord.Notify(traceID)
+	if p.coord != nil {
+		p.coord.Notify(traceID)
+	}
 	p.ingestTrace(traceID, current)
 }
 

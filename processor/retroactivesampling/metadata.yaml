@@ -6,6 +6,8 @@ tests:
     max_buffer_bytes: 1048576
     coordinator_grpc:
       endpoint: "127.0.0.1:4317"
+      tls:
+        insecure: true
 
 status:
   class: processor
