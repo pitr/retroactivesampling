@@ -7,7 +7,7 @@ type Decision uint8
 const (
 	NotSampled  Decision = iota
 	Sampled              // interesting — notify coordinator
-	SampledLocal         // interesting — skip coordinator (deterministic by trace ID)
+	SampledLocal         // interesting — skip coordinator; all collectors make the same decision
 	Dropped              // halt chain, do not sample
 )
 

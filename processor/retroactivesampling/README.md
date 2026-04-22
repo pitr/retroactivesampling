@@ -12,7 +12,9 @@ The `policies:` configuration is compatible with [tailsamplingprocessor](https:/
 4. If not interesting: keep in buffer; evicted when `max_buffer_bytes` is exceeded (oldest first).
 5. The coordinator broadcasts keep decisions received from any collector to all connected processors, which ingest matching buffered traces immediately.
 
-The `probabilistic` policy is deterministic by trace ID: all collectors with the same config make the same decision, so spans are ingested locally without coordinator broadcast.
+Some policies are deterministic across collectors — all collectors with the same config make the same decision, so spans are ingested locally without coordinator broadcast:
+- `always_sample`: trivially, all collectors always sample.
+- `probabilistic`: deterministic by trace ID hash — same seed + same trace ID = same decision.
 
 ## Configuration
 
@@ -53,7 +55,7 @@ Policies are evaluated in order with OR logic — first match wins.
 
 ### Supported policies
 
-- `always_sample`: Sample all traces.
+- `always_sample`: Sample all traces. Deterministic — skips coordinator broadcast.
 - `latency`: Sample based on trace duration (earliest start to latest end). `threshold_ms` sets the lower bound; `upper_threshold_ms` sets the upper bound (omit for no upper bound).
 - `status_code`: Sample based on span status code (`OK`, `ERROR`, `UNSET`).
 - `string_attribute`: Sample based on string attributes (resource and span), with exact or regex matching.

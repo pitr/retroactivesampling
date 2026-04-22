@@ -23,7 +23,7 @@ func TestBuild_AlwaysSample(t *testing.T) {
 	require.NoError(t, err)
 	d, err := chain.Evaluate(ptrace.NewTraces())
 	require.NoError(t, err)
-	assert.Equal(t, evaluator.Sampled, d)
+	assert.Equal(t, evaluator.SampledLocal, d)
 }
 
 func TestBuild_StatusCode(t *testing.T) {

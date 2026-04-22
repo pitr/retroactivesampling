@@ -13,5 +13,5 @@ func NewAlwaysSample(logger *zap.Logger) Evaluator {
 
 func (as *alwaysSample) Evaluate(ptrace.Traces) (Decision, error) {
 	as.logger.Debug("Evaluating spans in always-sample filter")
-	return Sampled, nil
+	return SampledLocal, nil
 }
