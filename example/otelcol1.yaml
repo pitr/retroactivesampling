@@ -13,10 +13,15 @@ processors:
     buffer_file: ./data/retrosampling1.ring
     max_buffer_bytes: 1073741824  # 1 GB
     coordinator_endpoint: localhost:9090
-    rules:
-      - type: error_status
-      - type: high_latency
-        threshold: 5s
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 5000
 
 exporters:
   debug:
