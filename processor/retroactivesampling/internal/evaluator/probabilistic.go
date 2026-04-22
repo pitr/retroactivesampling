@@ -1,30 +1,29 @@
 package evaluator
 
 import (
+	"encoding/binary"
 	"hash/fnv"
-	"math"
-	"math/big"
 
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
 )
 
-const defaultHashSalt = "default-hash-seed"
+const (
+	numHashBuckets        = 0x4000 // 16384 = 2^14, matches probabilisticsamplerprocessor
+	percentageScaleFactor = numHashBuckets / 100.0
+)
 
 type probabilisticSampler struct {
 	logger    *zap.Logger
-	threshold uint64
-	hashSalt  string
+	threshold uint32
+	hashSeed  uint32
 }
 
-func NewProbabilisticSampler(logger *zap.Logger, hashSalt string, samplingPercentage float64) Evaluator {
-	if hashSalt == "" {
-		hashSalt = defaultHashSalt
-	}
+func NewProbabilisticSampler(logger *zap.Logger, hashSeed uint32, samplingPercentage float64) Evaluator {
 	return &probabilisticSampler{
 		logger:    logger,
-		threshold: calculateThreshold(samplingPercentage / 100),
-		hashSalt:  hashSalt,
+		threshold: uint32(samplingPercentage * percentageScaleFactor),
+		hashSeed:  hashSeed,
 	}
 }
 
@@ -46,21 +45,17 @@ func (s *probabilisticSampler) Evaluate(t ptrace.Traces) (Decision, error) {
 		return NotSampled, nil
 	}
 	tid := spans.At(0).TraceID()
-	if hashTraceID(s.hashSalt, tid[:]) <= s.threshold {
+	if hashTraceID(s.hashSeed, tid[:]) < s.threshold {
 		return SampledLocal, nil
 	}
 	return NotSampled, nil
 }
 
-func calculateThreshold(ratio float64) uint64 {
-	boundary := new(big.Float).SetInt(new(big.Int).SetUint64(math.MaxUint64))
-	res, _ := boundary.Mul(boundary, big.NewFloat(ratio)).Uint64()
-	return res
-}
-
-func hashTraceID(salt string, b []byte) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(salt))
+func hashTraceID(seed uint32, b []byte) uint32 {
+	h := fnv.New32a()
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], seed)
+	_, _ = h.Write(buf[:])
 	_, _ = h.Write(b)
-	return h.Sum64()
+	return h.Sum32() & (numHashBuckets - 1)
 }

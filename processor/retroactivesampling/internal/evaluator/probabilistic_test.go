@@ -24,21 +24,21 @@ func makeTraceWithID(traceIDHex string) ptrace.Traces {
 }
 
 func TestProbabilistic_100Percent(t *testing.T) {
-	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), "", 100)
+	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), 0,100)
 	d, err := ev.Evaluate(makeTraceWithID("aabbccdd11111111aabbccdd11111111"))
 	require.NoError(t, err)
 	assert.Equal(t, evaluator.SampledLocal, d)
 }
 
 func TestProbabilistic_0Percent(t *testing.T) {
-	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), "", 0)
+	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), 0,0)
 	d, err := ev.Evaluate(makeTraceWithID("aabbccdd11111111aabbccdd11111111"))
 	require.NoError(t, err)
 	assert.Equal(t, evaluator.NotSampled, d)
 }
 
 func TestProbabilistic_EmptyTrace(t *testing.T) {
-	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), "", 100)
+	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), 0,100)
 	d, err := ev.Evaluate(ptrace.NewTraces())
 	require.NoError(t, err)
 	assert.Equal(t, evaluator.NotSampled, d)
@@ -46,7 +46,7 @@ func TestProbabilistic_EmptyTrace(t *testing.T) {
 
 func TestProbabilistic_ReturnsSampledLocal(t *testing.T) {
 	// 100% sampler must return SampledLocal, not Sampled.
-	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), "", 100)
+	ev := evaluator.NewProbabilisticSampler(zap.NewNop(), 0,100)
 	d, err := ev.Evaluate(makeTraceWithID("aabbccdd22222222aabbccdd22222222"))
 	require.NoError(t, err)
 	assert.Equal(t, evaluator.SampledLocal, d, "probabilistic must return SampledLocal to skip coordinator broadcast")

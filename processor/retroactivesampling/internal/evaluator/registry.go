@@ -61,7 +61,7 @@ func buildShared(settings component.TelemetrySettings, cfg *SharedPolicyCfg) (Ev
 		return NewBooleanAttributeFilter(logger, c.Key, c.Value), nil
 	case Probabilistic:
 		c := cfg.ProbabilisticCfg
-		return NewProbabilisticSampler(logger, c.HashSalt, c.SamplingPercentage), nil
+		return NewProbabilisticSampler(logger, c.HashSeed, c.SamplingPercentage), nil
 	case TraceState:
 		return NewTraceStateFilter(logger, cfg.TraceStateCfg.Key, cfg.TraceStateCfg.Values), nil
 	case TraceFlags:

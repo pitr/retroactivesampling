@@ -2,7 +2,7 @@
 
 Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk per collector host; keeps a trace if it matches any sampling policy. Propagates keep decisions to peer collectors via a coordinator service.
 
-The `policies:` configuration is compatible with [tailsamplingprocessor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor) — policies that work on partial spans can be copied as-is.
+The `policies:` configuration is compatible with [tailsamplingprocessor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/tailsamplingprocessor) — policies that work on partial spans can be copied as-is. Exception: the `probabilistic` policy uses `hash_seed` (uint32) instead of `hash_salt` (string), matching [probabilisticsamplerprocessor](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/probabilisticsamplerprocessor) hashing.
 
 ## How it works
 
@@ -36,6 +36,7 @@ processors:
         type: probabilistic
         probabilistic:
           sampling_percentage: 10
+          hash_seed: 42  # optional; all collectors in the fleet must use the same value
 ```
 
 | Key | Required | Default | Description |
@@ -58,7 +59,7 @@ Policies are evaluated in order with OR logic — first match wins.
 - `string_attribute`: Sample based on string attributes (resource and span), with exact or regex matching.
 - `numeric_attribute`: Sample based on numeric attributes (resource and span) by `min_value` and/or `max_value`.
 - `boolean_attribute`: Sample based on boolean attributes (resource and span).
-- `probabilistic`: Sample a percentage of traces by hashing the trace ID. Deterministic — all collectors with the same config make the same decision.
+- `probabilistic`: Sample a percentage of traces by hashing the trace ID. Deterministic — all collectors with the same config make the same decision. Uses `hash_seed` (uint32) and 32-bit FNV, compatible with `probabilisticsamplerprocessor` (hash_seed mode).
 - `trace_state`: Sample based on [TraceState](https://www.w3.org/TR/trace-context/#tracestate-header) key/value matches.
 - `trace_flags`: Sample if the [sampled trace flag](https://www.w3.org/TR/trace-context-2/#sampled-flag) was set on any span.
 - `ottl_condition`: Sample based on OTTL boolean expressions on spans or span events.

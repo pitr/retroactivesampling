@@ -84,7 +84,7 @@ type NumericAttributeCfg struct {
 }
 
 type ProbabilisticCfg struct {
-	HashSalt           string  `mapstructure:"hash_salt"`
+	HashSeed           uint32  `mapstructure:"hash_seed"`
 	SamplingPercentage float64 `mapstructure:"sampling_percentage"`
 }
 
