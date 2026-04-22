@@ -47,7 +47,11 @@ func main() {
 		Name: "coordinator_grpc_bytes_sent_total",
 		Help: "Total bytes sent to processors via gRPC.",
 	})
-	prometheus.MustRegister(bytesIn, bytesOut)
+	interestingTraces := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "coordinator_interesting_traces_total",
+		Help: "Total unique interesting traces seen by this coordinator.",
+	})
+	prometheus.MustRegister(bytesIn, bytesOut, interestingTraces)
 
 	if cfg.MetricsListen != "" {
 		mux := http.NewServeMux()
@@ -68,8 +72,10 @@ func main() {
 		if ctx.Err() != nil {
 			return
 		}
-		if _, err := ps.Publish(ctx, traceID); err != nil {
+		if novel, err := ps.Publish(ctx, traceID); err != nil {
 			log.Printf("publish %s: %v", traceID, err)
+		} else if novel {
+			interestingTraces.Add(1)
 		}
 	}, bytesIn, bytesOut)
 
