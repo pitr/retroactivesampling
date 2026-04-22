@@ -4,7 +4,7 @@ Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk
 
 ## How it works
 
-1. Incoming spans are grouped by trace ID and written as individual files in the configured buffer directory.
+1. Incoming spans are grouped by trace ID and written to the configured buffer file.
 2. Each incoming batch of spans is evaluated immediately against the configured rules.
 3. If interesting: delete from buffer → forward to next pipeline component → notify coordinator.
 4. If not interesting: keep in buffer; evicted when `max_buffer_bytes` is exceeded (oldest first).
@@ -15,7 +15,7 @@ Tail-based sampling processor for OpenTelemetry Collector. Buffers spans on disk
 ```yaml
 processors:
   retroactive_sampling:
-    buffer_dir: /var/otelcol/retrosampling/
+    buffer_file: /var/otelcol/retrosampling.ring
     max_buffer_bytes: 1073741824  # 1 GiB
     max_interest_cache_entries: 100000  # optional, default shown
     coordinator_endpoint: coordinator:9090
@@ -27,7 +27,7 @@ processors:
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `buffer_dir` | yes | — | Directory for per-trace buffer files |
+| `buffer_file` | yes | — | Path to the ring buffer file |
 | `max_buffer_bytes` | no | `0` (unlimited) | Max bytes of buffer disk usage; oldest traces evicted first |
 | `max_interest_cache_entries` | no | `100000` | Max number of interesting trace IDs cached in memory for fast-path routing |
 | `coordinator_endpoint` | yes | — | `host:port` of coordinator gRPC server |
@@ -42,6 +42,24 @@ processors:
 
 Rules are evaluated with OR logic — first match wins.
 
-## Building
+## Including in a custom collector
 
-This processor is built into a custom collector binary using the [OpenTelemetry Collector Builder](https://github.com/open-telemetry/opentelemetry-collector/tree/main/cmd/builder). See `example/build.yaml` and `make collector` in the repository root.
+Add to your `build.yaml`:
+
+```yaml
+processors:
+  - import: pitr.ca/retroactivesampling/processor/retroactivesampling
+    gomod: pitr.ca/retroactivesampling/processor/retroactivesampling v<version>
+```
+
+Then build:
+
+```bash
+builder --config build.yaml
+```
+
+Install the builder if needed:
+
+```bash
+go install go.opentelemetry.io/collector/cmd/builder@latest
+```
