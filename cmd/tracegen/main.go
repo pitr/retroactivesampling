@@ -28,8 +28,8 @@ import (
 var (
 	endpoints  = flag.String("endpoints", "localhost:4317,localhost:4318", "comma separated OTLP gRPC endpoints")
 	rate       = flag.Float64("rate", 10, "traces/sec")
-	svcCount   = flag.Int("services", 10, "number of services")
-	reportFreq = flag.Int("report-rate", 10, "report frequency in seconds")
+	svcCount   = flag.Int("services", 10, "number of services per trace")
+	reportFreq = flag.Int("report-rate", 10, "print report frequency in seconds")
 )
 
 type counter struct{ n atomic.Int64 }

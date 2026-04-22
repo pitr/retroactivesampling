@@ -2,8 +2,6 @@ module pitr.ca/retroactivesampling/coordinator
 
 go 1.25.6
 
-replace pitr.ca/retroactivesampling/proto v0.0.0 => ../proto
-
 require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.18.0

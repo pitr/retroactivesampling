@@ -1,0 +1,14 @@
+go 1.25.6
+
+use (
+	./bin
+	./cmd/tracegen
+	./coordinator
+	./processor/retroactivesampling
+	./proto
+)
+
+replace (
+	pitr.ca/retroactivesampling/processor/retroactivesampling v0.0.0 => ./processor/retroactivesampling
+	pitr.ca/retroactivesampling/proto v0.0.0 => ./proto
+)
