@@ -12,7 +12,10 @@ processors:
   retroactive_sampling:
     buffer_file: ./data/retrosampling2.ring
     max_buffer_bytes: 1073741824  # 1 GB
-    coordinator_endpoint: localhost:9090
+    coordinator_grpc:
+      endpoint: localhost:9090
+      tls:
+        insecure: true
     policies:
       - name: errors
         type: status_code
