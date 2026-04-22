@@ -1,5 +1,7 @@
 package evaluator
 
+import "github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl"
+
 // PolicyType indicates the type of sampling policy.
 type PolicyType string
 
@@ -124,10 +126,8 @@ type TraceStateCfg struct {
 	Values []string `mapstructure:"values"`
 }
 
-// OTTLConditionCfg uses string for ErrorMode to avoid the ottl dep here.
-// It is cast to ottl.ErrorMode in ottl.go at construction time.
 type OTTLConditionCfg struct {
-	ErrorMode           string   `mapstructure:"error_mode"`
-	SpanConditions      []string `mapstructure:"span"`
-	SpanEventConditions []string `mapstructure:"spanevent"`
+	ErrorMode           ottl.ErrorMode `mapstructure:"error_mode"`
+	SpanConditions      []string       `mapstructure:"span"`
+	SpanEventConditions []string       `mapstructure:"spanevent"`
 }
