@@ -6,8 +6,6 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
-
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspan"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/ottl/contexts/ottlspanevent"
@@ -17,7 +15,6 @@ import (
 type ottlConditionFilter struct {
 	sampleSpanExpr      *ottl.ConditionSequence[*ottlspan.TransformContext]
 	sampleSpanEventExpr *ottl.ConditionSequence[*ottlspanevent.TransformContext]
-	logger              *zap.Logger
 }
 
 func newBoolExprForSpan(conditions []string, errMode ottl.ErrorMode, set component.TelemetrySettings) (*ottl.ConditionSequence[*ottlspan.TransformContext], error) {
@@ -54,7 +51,7 @@ func NewOTTLConditionFilter(settings component.TelemetrySettings, spanConditions
 	if len(spanConditions) == 0 && len(spanEventConditions) == 0 {
 		return nil, errors.New("expected at least one OTTL condition to filter on")
 	}
-	f := &ottlConditionFilter{logger: settings.Logger}
+	f := &ottlConditionFilter{}
 	var err error
 	if len(spanConditions) > 0 {
 		if f.sampleSpanExpr, err = newBoolExprForSpan(spanConditions, errMode, settings); err != nil {

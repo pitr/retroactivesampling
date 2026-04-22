@@ -3,16 +3,14 @@ package evaluator
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 )
 
 type traceStateFilter struct {
 	key     string
-	logger  *zap.Logger
 	matcher func(string) bool
 }
 
-func NewTraceStateFilter(logger *zap.Logger, key string, values []string) Evaluator {
+func NewTraceStateFilter(key string, values []string) Evaluator {
 	valuesMap := make(map[string]struct{})
 	for _, v := range values {
 		if v != "" && len(key)+len(v) < 256 {
@@ -20,8 +18,7 @@ func NewTraceStateFilter(logger *zap.Logger, key string, values []string) Evalua
 		}
 	}
 	return &traceStateFilter{
-		key:    key,
-		logger: logger,
+		key:     key,
 		matcher: func(s string) bool { _, ok := valuesMap[s]; return ok },
 	}
 }

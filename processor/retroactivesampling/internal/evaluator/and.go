@@ -1,17 +1,13 @@
 package evaluator
 
-import (
-	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
-)
+import "go.opentelemetry.io/collector/pdata/ptrace"
 
 type andPolicy struct {
 	subpolicies []Evaluator
-	logger      *zap.Logger
 }
 
-func NewAnd(logger *zap.Logger, subpolicies []Evaluator) Evaluator {
-	return &andPolicy{subpolicies: subpolicies, logger: logger}
+func NewAnd(subpolicies []Evaluator) Evaluator {
+	return &andPolicy{subpolicies: subpolicies}
 }
 
 // Always returns Sampled (never SampledLocal) — AND result depends on

@@ -3,9 +3,9 @@
 ## Small items
 
 - [x] probabilistic policy hashing should work the same way as https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/probabilisticsamplerprocessor
-- [ ] check for inefficient zap log attributes (like stringification)
+- [x] check for inefficient zap log attributes (like stringification)
 - [ ] drop decision is not handled by most composite policies or helpers. Check if this should be handled, maybe error out if it does not make sense in some situations.
-- [ ] check if any other procerros policies should use sample local decision. Assume all collectors have the same policy config. Update processor README.
+- [ ] check if any other processor policies should use sample local decision. Assume all collectors have the same policy config. Update processor README.
 
 ## Large items
 

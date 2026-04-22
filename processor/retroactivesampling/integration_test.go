@@ -78,7 +78,12 @@ func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSi
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     coordAddr,
-		Rules:                   []evaluator.RuleConfig{{Type: "error_status"}},
+		Policies: []evaluator.PolicyCfg{{
+			SharedPolicyCfg: evaluator.SharedPolicyCfg{
+				Type:          evaluator.StatusCode,
+				StatusCodeCfg: evaluator.StatusCodeCfg{StatusCodes: []string{"ERROR"}},
+			},
+		}},
 	}
 	factory := proc.NewFactory()
 	p, err := factory.CreateTraces(

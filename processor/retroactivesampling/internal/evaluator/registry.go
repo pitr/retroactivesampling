@@ -55,15 +55,15 @@ func buildShared(settings component.TelemetrySettings, cfg *SharedPolicyCfg) (Ev
 		if c.MaxValue != 0 {
 			maxPtr = &c.MaxValue
 		}
-		return NewNumericAttributeFilter(logger, c.Key, minPtr, maxPtr), nil
+		return NewNumericAttributeFilter(c.Key, minPtr, maxPtr), nil
 	case BooleanAttribute:
 		c := cfg.BooleanAttributeCfg
-		return NewBooleanAttributeFilter(logger, c.Key, c.Value), nil
+		return NewBooleanAttributeFilter(c.Key, c.Value), nil
 	case Probabilistic:
 		c := cfg.ProbabilisticCfg
 		return NewProbabilisticSampler(logger, c.HashSeed, c.SamplingPercentage), nil
 	case TraceState:
-		return NewTraceStateFilter(logger, cfg.TraceStateCfg.Key, cfg.TraceStateCfg.Values), nil
+		return NewTraceStateFilter(cfg.TraceStateCfg.Key, cfg.TraceStateCfg.Values), nil
 	case TraceFlags:
 		return NewTraceFlags(logger), nil
 	case OTTLCondition:
@@ -85,7 +85,7 @@ func buildAndPolicy(settings component.TelemetrySettings, cfg *AndCfg) (Evaluato
 		}
 		subs[i] = ev
 	}
-	return NewAnd(settings.Logger, subs), nil
+	return NewAnd(subs), nil
 }
 
 func buildNotPolicy(settings component.TelemetrySettings, cfg *NotCfg) (Evaluator, error) {
@@ -93,7 +93,7 @@ func buildNotPolicy(settings component.TelemetrySettings, cfg *NotCfg) (Evaluato
 	if err != nil {
 		return nil, fmt.Errorf("not sub-policy: %w", err)
 	}
-	return NewNot(settings.Logger, sub), nil
+	return NewNot(sub), nil
 }
 
 func buildDropPolicy(settings component.TelemetrySettings, cfg *DropCfg) (Evaluator, error) {
@@ -105,6 +105,6 @@ func buildDropPolicy(settings component.TelemetrySettings, cfg *DropCfg) (Evalua
 		}
 		subs[i] = ev
 	}
-	return NewDrop(settings.Logger, subs), nil
+	return NewDrop(subs), nil
 }
 

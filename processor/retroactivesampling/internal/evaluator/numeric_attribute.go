@@ -5,18 +5,16 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
 )
 
 type numericAttributeFilter struct {
 	key      string
 	minValue *int64
 	maxValue *int64
-	logger   *zap.Logger
 }
 
-func NewNumericAttributeFilter(logger *zap.Logger, key string, minValue, maxValue *int64) Evaluator {
-	return &numericAttributeFilter{key: key, minValue: minValue, maxValue: maxValue, logger: logger}
+func NewNumericAttributeFilter(key string, minValue, maxValue *int64) Evaluator {
+	return &numericAttributeFilter{key: key, minValue: minValue, maxValue: maxValue}
 }
 
 func (naf *numericAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {

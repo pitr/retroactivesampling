@@ -3,17 +3,15 @@ package evaluator
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
 )
 
 type booleanAttributeFilter struct {
-	key    string
-	value  bool
-	logger *zap.Logger
+	key   string
+	value bool
 }
 
-func NewBooleanAttributeFilter(logger *zap.Logger, key string, value bool) Evaluator {
-	return &booleanAttributeFilter{key: key, value: value, logger: logger}
+func NewBooleanAttributeFilter(key string, value bool) Evaluator {
+	return &booleanAttributeFilter{key: key, value: value}
 }
 
 func (baf *booleanAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {

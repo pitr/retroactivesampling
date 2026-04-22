@@ -1,17 +1,13 @@
 package evaluator
 
-import (
-	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.uber.org/zap"
-)
+import "go.opentelemetry.io/collector/pdata/ptrace"
 
 type notPolicy struct {
-	logger             *zap.Logger
 	subPolicyEvaluator Evaluator
 }
 
-func NewNot(logger *zap.Logger, subPolicyEvaluator Evaluator) Evaluator {
-	return &notPolicy{logger: logger, subPolicyEvaluator: subPolicyEvaluator}
+func NewNot(subPolicyEvaluator Evaluator) Evaluator {
+	return &notPolicy{subPolicyEvaluator: subPolicyEvaluator}
 }
 
 func (n *notPolicy) Evaluate(t ptrace.Traces) (Decision, error) {
