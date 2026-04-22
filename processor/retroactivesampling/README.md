@@ -28,7 +28,7 @@ processors:
 | Key | Required | Default | Description |
 |---|---|---|---|
 | `buffer_file` | yes | — | Path to the ring buffer file |
-| `max_buffer_bytes` | no | `0` (unlimited) | Max bytes of buffer disk usage; oldest traces evicted first |
+| `max_buffer_bytes` | yes | — | Max bytes of buffer disk usage; oldest traces evicted first |
 | `max_interest_cache_entries` | no | `100000` | Max number of interesting trace IDs cached in memory for fast-path routing |
 | `coordinator_endpoint` | yes | — | `host:port` of coordinator gRPC server |
 | `rules` | yes | — | List of sampling rules (evaluated with OR logic) |
