@@ -41,7 +41,7 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 		tb.Shutdown()
 		return nil, err
 	}
-	chain, err := evaluator.Build(cfg.Rules)
+	chain, err := evaluator.Build(set, cfg.Policies)
 	if err != nil {
 		_ = buf.Close()
 		tb.Shutdown()
@@ -74,8 +74,16 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
-		if p.eval.Evaluate(spans) {
+		d, err := p.eval.Evaluate(spans)
+		if err != nil {
+			p.logger.Warn("policy evaluation error", zap.String("trace_id", traceID), zap.Error(err))
+		}
+		switch d {
+		case evaluator.Sampled:
 			p.ingestInteresting(traceID, spans)
+			continue
+		case evaluator.SampledLocal:
+			p.ingestLocal(traceID, spans)
 			continue
 		}
 		if err := p.buf.WriteWithEviction(traceID, spans, now); err != nil {
@@ -108,6 +116,25 @@ func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.
 	}
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
 		p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
+	}
+}
+
+func (p *retroactiveProcessor) ingestLocal(traceID string, current ptrace.Traces) {
+	p.ic.Add(traceID)
+	buffered, ok, err := p.buf.ReadAndDelete(traceID)
+	if err != nil {
+		p.logger.Warn("read buffer for local trace", zap.String("trace_id", traceID), zap.Error(err))
+		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
+			p.logger.Error("ingest local trace", zap.String("trace_id", traceID), zap.Error(err2))
+		}
+		return
+	}
+	if ok {
+		current.ResourceSpans().MoveAndAppendTo(buffered.ResourceSpans())
+		current = buffered
+	}
+	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
+		p.logger.Error("ingest local trace", zap.String("trace_id", traceID), zap.Error(err))
 	}
 }
 

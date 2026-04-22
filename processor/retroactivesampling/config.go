@@ -9,5 +9,5 @@ type Config struct {
 	MaxBufferBytes          int64                  `mapstructure:"max_buffer_bytes"`
 	MaxInterestCacheEntries int                    `mapstructure:"max_interest_cache_entries"`
 	CoordinatorEndpoint     string                 `mapstructure:"coordinator_endpoint"`
-	Rules                   []evaluator.RuleConfig `mapstructure:"rules"`
+	Policies                []evaluator.PolicyCfg  `mapstructure:"policies"`
 }

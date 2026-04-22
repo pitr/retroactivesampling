@@ -94,26 +94,28 @@ func makeTraceWithStatus(traceIDHex string, status ptrace.StatusCode) ptrace.Tra
 
 func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) otelprocessor.Traces {
 	t.Helper()
+	p := evaluator.PolicyCfg{}
+	p.Name = "errors"
+	p.Type = evaluator.StatusCode
+	p.StatusCodeCfg = evaluator.StatusCodeCfg{StatusCodes: []string{"ERROR"}}
 	cfg := &processor.Config{
 		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
 		MaxInterestCacheEntries: 1000,
 		CoordinatorEndpoint:     addr,
-		Rules: []evaluator.RuleConfig{
-			{Type: "error_status"},
-		},
+		Policies:                []evaluator.PolicyCfg{p},
 	}
 	factory := processor.NewFactory()
-	p, err := factory.CreateTraces(
+	proc, err := factory.CreateTraces(
 		context.Background(),
 		processortest.NewNopSettings(factory.Type()),
 		cfg,
 		sink,
 	)
 	require.NoError(t, err)
-	require.NoError(t, p.Start(context.Background(), nil))
-	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-	return p
+	require.NoError(t, proc.Start(context.Background(), nil))
+	t.Cleanup(func() { _ = proc.Shutdown(context.Background()) })
+	return proc
 }
 
 func TestInterestingTraceIngestedImmediately(t *testing.T) {
@@ -266,4 +268,42 @@ func TestConcurrentInterestingAndCoordinatorDecision(t *testing.T) {
 		return sink.SpanCount() >= 2
 	}, 2*time.Second, 10*time.Millisecond, "spans must be ingested")
 	assert.Never(t, func() bool { return sink.SpanCount() > 2 }, 50*time.Millisecond, 5*time.Millisecond, "double-write: buffered span must not be duplicated")
+}
+
+func TestProbabilistic_NoCoordinatorNotify(t *testing.T) {
+	fc, addr := startFakeCoordinator(t)
+	sink := &consumertest.TracesSink{}
+
+	p := evaluator.PolicyCfg{}
+	p.Name = "prob"
+	p.Type = evaluator.Probabilistic
+	p.ProbabilisticCfg = evaluator.ProbabilisticCfg{SamplingPercentage: 100}
+	cfg := &processor.Config{
+		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
+		MaxBufferBytes:          100 << 20,
+		MaxInterestCacheEntries: 1000,
+		CoordinatorEndpoint:     addr,
+		Policies:                []evaluator.PolicyCfg{p},
+	}
+	factory := processor.NewFactory()
+	proc, err := factory.CreateTraces(
+		context.Background(),
+		processortest.NewNopSettings(factory.Type()),
+		cfg,
+		sink,
+	)
+	require.NoError(t, err)
+	require.NoError(t, proc.Start(context.Background(), nil))
+	t.Cleanup(func() { _ = proc.Shutdown(context.Background()) })
+
+	trace := makeTraceWithStatus("aabbccdd11111111aabbccdd11111111", ptrace.StatusCodeOk)
+	require.NoError(t, proc.ConsumeTraces(context.Background(), trace))
+
+	assert.Equal(t, 1, sink.SpanCount())
+
+	time.Sleep(100 * time.Millisecond)
+	fc.mu.Lock()
+	notified := len(fc.notified)
+	fc.mu.Unlock()
+	assert.Equal(t, 0, notified, "probabilistic policy must not notify coordinator")
 }
