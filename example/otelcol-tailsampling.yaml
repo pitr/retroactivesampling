@@ -1,0 +1,45 @@
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1779
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4319
+
+processors:
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow
+        type: latency
+        latency:
+          threshold_ms: 5000
+
+exporters:
+  debug:
+    verbosity: basic
+  otlp_http:
+    traces_endpoint: http://localhost:10428/insert/opentelemetry/v1/traces
+
+service:
+  extensions: [pprof]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling]
+      exporters: [otlp_http]
+  telemetry:
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: '0.0.0.0'
+                port: 8890
