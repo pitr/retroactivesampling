@@ -20,11 +20,11 @@ func (l *latency) Evaluate(t ptrace.Traces) (Decision, error) {
 	l.logger.Debug("Evaluating spans in latency filter")
 	var minTime, maxTime pcommon.Timestamp
 	return hasSpanWithCondition(t, func(span ptrace.Span) bool {
-		if minTime == 0 || span.StartTimestamp() < minTime {
-			minTime = span.StartTimestamp()
-		}
-		if maxTime == 0 || span.EndTimestamp() > maxTime {
-			maxTime = span.EndTimestamp()
+		if minTime == 0 {
+			minTime, maxTime = span.StartTimestamp(), span.EndTimestamp()
+		} else {
+			minTime = min(minTime, span.StartTimestamp())
+			maxTime = max(maxTime, span.EndTimestamp())
 		}
 		d := maxTime.AsTime().Sub(minTime.AsTime())
 		if l.upperThresholdMs == 0 {

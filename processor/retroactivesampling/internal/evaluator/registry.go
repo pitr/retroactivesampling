@@ -45,7 +45,7 @@ func buildShared(settings component.TelemetrySettings, cfg *SharedPolicyCfg) (Ev
 		return NewStatusCodeFilter(logger, cfg.StatusCodeCfg.StatusCodes)
 	case StringAttribute:
 		c := cfg.StringAttributeCfg
-		return NewStringAttributeFilter(logger, c.Key, c.Values, c.EnabledRegexMatching, c.CacheMaxSize, c.InvertMatch)
+		return NewStringAttributeFilter(logger, c.Key, c.Values, c.EnabledRegexMatching, c.CacheMaxSize)
 	case NumericAttribute:
 		c := cfg.NumericAttributeCfg
 		var minPtr, maxPtr *int64
@@ -55,10 +55,10 @@ func buildShared(settings component.TelemetrySettings, cfg *SharedPolicyCfg) (Ev
 		if c.MaxValue != 0 {
 			maxPtr = &c.MaxValue
 		}
-		return NewNumericAttributeFilter(logger, c.Key, minPtr, maxPtr, c.InvertMatch), nil
+		return NewNumericAttributeFilter(logger, c.Key, minPtr, maxPtr), nil
 	case BooleanAttribute:
 		c := cfg.BooleanAttributeCfg
-		return NewBooleanAttributeFilter(logger, c.Key, c.Value, c.InvertMatch), nil
+		return NewBooleanAttributeFilter(logger, c.Key, c.Value), nil
 	case Probabilistic:
 		c := cfg.ProbabilisticCfg
 		return NewProbabilisticSampler(logger, c.HashSalt, c.SamplingPercentage), nil

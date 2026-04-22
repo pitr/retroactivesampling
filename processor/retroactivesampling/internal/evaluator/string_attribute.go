@@ -13,13 +13,12 @@ import (
 const defaultCacheSize = 128
 
 type stringAttributeFilter struct {
-	key         string
-	logger      *zap.Logger
-	matcher     func(string) bool
-	invertMatch bool
+	key     string
+	logger  *zap.Logger
+	matcher func(string) bool
 }
 
-func NewStringAttributeFilter(logger *zap.Logger, key string, values []string, regexMatchEnabled bool, evictSize int, invertMatch bool) (Evaluator, error) {
+func NewStringAttributeFilter(logger *zap.Logger, key string, values []string, regexMatchEnabled bool, evictSize int) (Evaluator, error) {
 	if regexMatchEnabled {
 		if evictSize <= 0 {
 			evictSize = defaultCacheSize
@@ -45,7 +44,6 @@ func NewStringAttributeFilter(logger *zap.Logger, key string, values []string, r
 				cache.Add(s, false)
 				return false
 			},
-			invertMatch: invertMatch,
 		}, nil
 	}
 	valuesMap := make(map[string]struct{})
@@ -55,43 +53,22 @@ func NewStringAttributeFilter(logger *zap.Logger, key string, values []string, r
 		}
 	}
 	return &stringAttributeFilter{
-		key:         key,
-		logger:      logger,
-		matcher:     func(s string) bool { _, ok := valuesMap[s]; return ok },
-		invertMatch: invertMatch,
+		key:     key,
+		logger:  logger,
+		matcher: func(s string) bool { _, ok := valuesMap[s]; return ok },
 	}, nil
 }
 
 func (saf *stringAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {
 	saf.logger.Debug("Evaluating spans in string-tag filter")
-	if saf.invertMatch {
-		return invertHasResourceOrSpanWithCondition(t,
-			func(r pcommon.Resource) bool {
-				if v, ok := r.Attributes().Get(saf.key); ok {
-					return !saf.matcher(v.Str())
-				}
-				return true
-			},
-			func(span ptrace.Span) bool {
-				if v, ok := span.Attributes().Get(saf.key); ok && v.Str() != "" {
-					return !saf.matcher(v.Str())
-				}
-				return true
-			},
-		), nil
-	}
 	return hasResourceOrSpanWithCondition(t,
 		func(r pcommon.Resource) bool {
-			if v, ok := r.Attributes().Get(saf.key); ok {
-				return saf.matcher(v.Str())
-			}
-			return false
+			v, ok := r.Attributes().Get(saf.key)
+			return ok && saf.matcher(v.Str())
 		},
 		func(span ptrace.Span) bool {
-			if v, ok := span.Attributes().Get(saf.key); ok && v.Str() != "" {
-				return saf.matcher(v.Str())
-			}
-			return false
+			v, ok := span.Attributes().Get(saf.key)
+			return ok && v.Str() != "" && saf.matcher(v.Str())
 		},
 	), nil
 }

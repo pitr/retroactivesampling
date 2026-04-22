@@ -78,10 +78,9 @@ type LatencyCfg struct {
 }
 
 type NumericAttributeCfg struct {
-	Key         string `mapstructure:"key"`
-	MinValue    int64  `mapstructure:"min_value"`
-	MaxValue    int64  `mapstructure:"max_value"`
-	InvertMatch bool   `mapstructure:"invert_match"`
+	Key      string `mapstructure:"key"`
+	MinValue int64  `mapstructure:"min_value"`
+	MaxValue int64  `mapstructure:"max_value"`
 }
 
 type ProbabilisticCfg struct {
@@ -98,7 +97,6 @@ type StringAttributeCfg struct {
 	Values               []string `mapstructure:"values"`
 	EnabledRegexMatching bool     `mapstructure:"enabled_regex_matching"`
 	CacheMaxSize         int      `mapstructure:"cache_max_size"`
-	InvertMatch          bool     `mapstructure:"invert_match"`
 }
 
 type RateLimitingCfg struct {
@@ -116,9 +114,8 @@ type SpanCountCfg struct {
 }
 
 type BooleanAttributeCfg struct {
-	Key         string `mapstructure:"key"`
-	Value       bool   `mapstructure:"value"`
-	InvertMatch bool   `mapstructure:"invert_match"`
+	Key   string `mapstructure:"key"`
+	Value bool   `mapstructure:"value"`
 }
 
 type TraceStateCfg struct {

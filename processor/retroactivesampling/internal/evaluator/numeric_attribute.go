@@ -9,15 +9,14 @@ import (
 )
 
 type numericAttributeFilter struct {
-	key         string
-	minValue    *int64
-	maxValue    *int64
-	logger      *zap.Logger
-	invertMatch bool
+	key      string
+	minValue *int64
+	maxValue *int64
+	logger   *zap.Logger
 }
 
-func NewNumericAttributeFilter(logger *zap.Logger, key string, minValue, maxValue *int64, invertMatch bool) Evaluator {
-	return &numericAttributeFilter{key: key, minValue: minValue, maxValue: maxValue, logger: logger, invertMatch: invertMatch}
+func NewNumericAttributeFilter(logger *zap.Logger, key string, minValue, maxValue *int64) Evaluator {
+	return &numericAttributeFilter{key: key, minValue: minValue, maxValue: maxValue, logger: logger}
 }
 
 func (naf *numericAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {
@@ -30,35 +29,14 @@ func (naf *numericAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {
 		maxVal = *naf.maxValue
 	}
 	inRange := func(v int64) bool { return v >= minVal && v <= maxVal }
-
-	if naf.invertMatch {
-		return invertHasResourceOrSpanWithCondition(t,
-			func(r pcommon.Resource) bool {
-				if v, ok := r.Attributes().Get(naf.key); ok {
-					return !inRange(v.Int())
-				}
-				return true
-			},
-			func(span ptrace.Span) bool {
-				if v, ok := span.Attributes().Get(naf.key); ok {
-					return !inRange(v.Int())
-				}
-				return true
-			},
-		), nil
-	}
 	return hasResourceOrSpanWithCondition(t,
 		func(r pcommon.Resource) bool {
-			if v, ok := r.Attributes().Get(naf.key); ok {
-				return inRange(v.Int())
-			}
-			return false
+			v, ok := r.Attributes().Get(naf.key)
+			return ok && inRange(v.Int())
 		},
 		func(span ptrace.Span) bool {
-			if v, ok := span.Attributes().Get(naf.key); ok {
-				return inRange(v.Int())
-			}
-			return false
+			v, ok := span.Attributes().Get(naf.key)
+			return ok && inRange(v.Int())
 		},
 	), nil
 }

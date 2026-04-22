@@ -7,46 +7,24 @@ import (
 )
 
 type booleanAttributeFilter struct {
-	key         string
-	value       bool
-	logger      *zap.Logger
-	invertMatch bool
+	key    string
+	value  bool
+	logger *zap.Logger
 }
 
-func NewBooleanAttributeFilter(logger *zap.Logger, key string, value, invertMatch bool) Evaluator {
-	return &booleanAttributeFilter{key: key, value: value, logger: logger, invertMatch: invertMatch}
+func NewBooleanAttributeFilter(logger *zap.Logger, key string, value bool) Evaluator {
+	return &booleanAttributeFilter{key: key, value: value, logger: logger}
 }
 
 func (baf *booleanAttributeFilter) Evaluate(t ptrace.Traces) (Decision, error) {
-	matches := func(v bool) bool { return v == baf.value }
-	if baf.invertMatch {
-		return invertHasResourceOrSpanWithCondition(t,
-			func(r pcommon.Resource) bool {
-				if v, ok := r.Attributes().Get(baf.key); ok {
-					return !matches(v.Bool())
-				}
-				return true
-			},
-			func(span ptrace.Span) bool {
-				if v, ok := span.Attributes().Get(baf.key); ok {
-					return !matches(v.Bool())
-				}
-				return true
-			},
-		), nil
-	}
 	return hasResourceOrSpanWithCondition(t,
 		func(r pcommon.Resource) bool {
-			if v, ok := r.Attributes().Get(baf.key); ok {
-				return matches(v.Bool())
-			}
-			return false
+			v, ok := r.Attributes().Get(baf.key)
+			return ok && v.Bool() == baf.value
 		},
 		func(span ptrace.Span) bool {
-			if v, ok := span.Attributes().Get(baf.key); ok {
-				return matches(v.Bool())
-			}
-			return false
+			v, ok := span.Attributes().Get(baf.key)
+			return ok && v.Bool() == baf.value
 		},
 	), nil
 }
