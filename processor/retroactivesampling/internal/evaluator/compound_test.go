@@ -82,6 +82,29 @@ func TestDrop_OneNotSampledPasses(t *testing.T) {
 	assert.Equal(t, evaluator.NotSampled, d)
 }
 
+func TestAnd_SubDropped_ReturnsError(t *testing.T) {
+	and := evaluator.NewAnd([]evaluator.Evaluator{
+		stub{d: evaluator.Sampled},
+		stub{d: evaluator.Dropped},
+	})
+	_, err := and.Evaluate(ptrace.NewTraces())
+	require.Error(t, err)
+}
+
+func TestNot_SubDropped_ReturnsError(t *testing.T) {
+	not := evaluator.NewNot(stub{d: evaluator.Dropped})
+	_, err := not.Evaluate(ptrace.NewTraces())
+	require.Error(t, err)
+}
+
+func TestDrop_SubDropped_ReturnsError(t *testing.T) {
+	drop := evaluator.NewDrop([]evaluator.Evaluator{
+		stub{d: evaluator.Dropped},
+	})
+	_, err := drop.Evaluate(ptrace.NewTraces())
+	require.Error(t, err)
+}
+
 func TestDrop_HaltsChain(t *testing.T) {
 	drop := evaluator.NewDrop([]evaluator.Evaluator{stub{d: evaluator.Sampled}})
 	c := evaluator.Chain{drop, stub{d: evaluator.Sampled}}

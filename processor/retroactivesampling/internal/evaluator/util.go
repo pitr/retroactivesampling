@@ -1,6 +1,8 @@
 package evaluator
 
 import (
+	"errors"
+
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -31,8 +33,11 @@ func allSubsMatch(subs []Evaluator, t ptrace.Traces) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if d == NotSampled {
+		switch d {
+		case NotSampled:
 			return false, nil
+		case Dropped:
+			return false, errors.New("sub-policy returned Dropped; drop policies cannot be nested")
 		}
 	}
 	return true, nil

@@ -1,6 +1,10 @@
 package evaluator
 
-import "go.opentelemetry.io/collector/pdata/ptrace"
+import (
+	"errors"
+
+	"go.opentelemetry.io/collector/pdata/ptrace"
+)
 
 type notPolicy struct {
 	subPolicyEvaluator Evaluator
@@ -20,6 +24,8 @@ func (n *notPolicy) Evaluate(t ptrace.Traces) (Decision, error) {
 		return NotSampled, nil
 	case NotSampled:
 		return Sampled, nil
+	case Dropped:
+		return NotSampled, errors.New("not policy: sub-policy returned Dropped; semantics of not(drop) are undefined")
 	default:
 		return d, nil
 	}
