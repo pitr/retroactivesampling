@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] coordinator redis_addr config only supports a single address; support read replicas so coordinators can subscribe to replicas instead of the primary, distributing Redis outbound fan-out (I × M × C total) across replica nodes.
 
 ## Large items
 

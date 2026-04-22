@@ -17,15 +17,20 @@ make build
 
 ```yaml
 grpc_listen: :9090        # gRPC listen address for processor connections
-redis_addr: redis:6379    # Redis address
+redis_addr: redis:6379    # Redis primary address (writes)
+redis_replica_addrs:      # Redis replica addresses for subscriptions (optional)
+  - replica1:6379
+  - replica2:6379
 decided_key_ttl: 60s      # dedup key TTL — must exceed your trace window
 metrics_listen: :9091     # Prometheus metrics endpoint (optional)
+shutdown_timeout: 10s     # graceful shutdown timeout (optional)
 ```
 
 | Key | Required | Description |
 |---|---|---|
 | `grpc_listen` | yes | `host:port` to listen for processor gRPC connections |
-| `redis_addr` | yes | Redis `host:port` |
+| `redis_addr` | yes | Redis primary `host:port` (used for writes: SET NX + PUBLISH) |
+| `redis_replica_addrs` | no | List of Redis replica `host:port` addresses. Each coordinator instance picks one at random to subscribe to, distributing the Redis outbound fan-out across replicas. Falls back to primary if not set. |
 | `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |

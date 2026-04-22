@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -72,7 +73,14 @@ func main() {
 		}()
 	}
 
-	ps := rds.New(cfg.RedisAddr, cfg.DecidedKeyTTL)
+	var ps *rds.PubSub
+	if len(cfg.RedisReplicaAddrs) > 0 {
+		replica := cfg.RedisReplicaAddrs[randIntn(len(cfg.RedisReplicaAddrs))]
+		log.Printf("subscribing to Redis replica %s", replica)
+		ps = rds.NewWithReplica(cfg.RedisAddr, replica, cfg.DecidedKeyTTL)
+	} else {
+		ps = rds.New(cfg.RedisAddr, cfg.DecidedKeyTTL)
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -135,3 +143,5 @@ func main() {
 		log.Fatalf("serve: %v", err)
 	}
 }
+
+func randIntn(n int) int { return rand.Intn(n) }
