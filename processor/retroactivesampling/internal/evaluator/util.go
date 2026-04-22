@@ -25,6 +25,19 @@ func hasResourceOrSpanWithCondition(
 	return NotSampled
 }
 
+func allSubsMatch(subs []Evaluator, t ptrace.Traces) (bool, error) {
+	for _, sub := range subs {
+		d, err := sub.Evaluate(t)
+		if err != nil {
+			return false, err
+		}
+		if d == NotSampled {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func hasSpanWithCondition(td ptrace.Traces, shouldSample func(ptrace.Span) bool) Decision {
 	for _, rs := range td.ResourceSpans().All() {
 		for _, ss := range rs.ScopeSpans().All() {

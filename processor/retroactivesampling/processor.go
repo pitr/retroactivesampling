@@ -101,31 +101,20 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.Traces) {
 	p.ic.Add(traceID)
 	p.coord.Notify(traceID)
-
-	buffered, ok, err := p.buf.ReadAndDelete(traceID)
-	if err != nil {
-		p.logger.Warn("read buffer for interesting trace", zap.String("trace_id", traceID), zap.Error(err))
-		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
-			p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err2))
-		}
-		return
-	}
-	if ok {
-		current.ResourceSpans().MoveAndAppendTo(buffered.ResourceSpans())
-		current = buffered
-	}
-	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("ingest interesting trace", zap.String("trace_id", traceID), zap.Error(err))
-	}
+	p.ingestTrace(traceID, current)
 }
 
 func (p *retroactiveProcessor) ingestLocal(traceID string, current ptrace.Traces) {
 	p.ic.Add(traceID)
+	p.ingestTrace(traceID, current)
+}
+
+func (p *retroactiveProcessor) ingestTrace(traceID string, current ptrace.Traces) {
 	buffered, ok, err := p.buf.ReadAndDelete(traceID)
 	if err != nil {
-		p.logger.Warn("read buffer for local trace", zap.String("trace_id", traceID), zap.Error(err))
+		p.logger.Warn("read buffer", zap.String("trace_id", traceID), zap.Error(err))
 		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
-			p.logger.Error("ingest local trace", zap.String("trace_id", traceID), zap.Error(err2))
+			p.logger.Error("ingest trace", zap.String("trace_id", traceID), zap.Error(err2))
 		}
 		return
 	}
@@ -134,7 +123,7 @@ func (p *retroactiveProcessor) ingestLocal(traceID string, current ptrace.Traces
 		current = buffered
 	}
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("ingest local trace", zap.String("trace_id", traceID), zap.Error(err))
+		p.logger.Error("ingest trace", zap.String("trace_id", traceID), zap.Error(err))
 	}
 }
 

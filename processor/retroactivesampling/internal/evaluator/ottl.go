@@ -71,12 +71,9 @@ func NewOTTLConditionFilter(settings component.TelemetrySettings, spanConditions
 
 func (ocf *ottlConditionFilter) Evaluate(t ptrace.Traces) (Decision, error) {
 	ctx := context.Background()
-	for i := 0; i < t.ResourceSpans().Len(); i++ {
-		rs := t.ResourceSpans().At(i)
-		for j := 0; j < rs.ScopeSpans().Len(); j++ {
-			ss := rs.ScopeSpans().At(j)
-			for k := 0; k < ss.Spans().Len(); k++ {
-				span := ss.Spans().At(k)
+	for _, rs := range t.ResourceSpans().All() {
+		for _, ss := range rs.ScopeSpans().All() {
+			for _, span := range ss.Spans().All() {
 				if ocf.sampleSpanExpr != nil {
 					tCtx := ottlspan.NewTransformContextPtr(rs, ss, span)
 					ok, err := ocf.sampleSpanExpr.Eval(ctx, tCtx)
@@ -89,8 +86,8 @@ func (ocf *ottlConditionFilter) Evaluate(t ptrace.Traces) (Decision, error) {
 					}
 				}
 				if ocf.sampleSpanEventExpr != nil {
-					for l := 0; l < span.Events().Len(); l++ {
-						tCtx := ottlspanevent.NewTransformContextPtr(rs, ss, span, span.Events().At(l))
+					for _, spanEvent := range span.Events().All() {
+						tCtx := ottlspanevent.NewTransformContextPtr(rs, ss, span, spanEvent)
 						ok, err := ocf.sampleSpanEventExpr.Eval(ctx, tCtx)
 						tCtx.Close()
 						if err != nil {
