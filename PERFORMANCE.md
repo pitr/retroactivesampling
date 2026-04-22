@@ -89,7 +89,7 @@ Example (I=10k, P=10k, M=20 B):
 | 10 | 10M | 200 MB/s |
 | 100 | 1M | 20 MB/s |
 
-**Risk:** high. Fleet total scales with I × P — a 10× increase in either variable raises total broadcast traffic 10×; a 10× increase in both raises it 100× (200 GB/s at I=100k, P=100k). Adding coordinators does not reduce fleet total, only per-instance load. There is also a software bottleneck independent of network capacity: the current `Broadcast` implementation holds an exclusive mutex for the full duration of all `stream.Send()` calls, so a single backpressured stream stalls the entire coordinator. This is the binding constraint at moderate load, before network limits are reached.
+**Risk:** high. Fleet total scales with I × P — a 10× increase in either variable raises total broadcast traffic 10×; a 10× increase in both raises it 100× (200 GB/s at I=100k, P=100k). Adding coordinators does not reduce fleet total, only per-instance load.
 
 ## Waste
 

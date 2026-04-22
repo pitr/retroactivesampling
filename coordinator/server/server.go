@@ -10,12 +10,17 @@ import (
 
 	gen "pitr.ca/retroactivesampling/proto"
 )
+
 type Counter interface{ Add(float64) }
+
+type streamEntry struct {
+	ch chan *gen.CoordinatorMessage
+}
 
 type Server struct {
 	gen.UnimplementedCoordinatorServer
 	mu       sync.Mutex
-	streams  map[string]gen.Coordinator_ConnectServer
+	streams  map[string]*streamEntry
 	onNotify func(traceID string)
 	bytesIn  Counter
 	bytesOut Counter
@@ -23,7 +28,7 @@ type Server struct {
 
 func New(onNotify func(traceID string), bytesIn, bytesOut Counter) *Server {
 	return &Server{
-		streams:  make(map[string]gen.Coordinator_ConnectServer),
+		streams:  make(map[string]*streamEntry),
 		onNotify: onNotify,
 		bytesIn:  bytesIn,
 		bytesOut: bytesOut,
@@ -32,13 +37,32 @@ func New(onNotify func(traceID string), bytesIn, bytesOut Counter) *Server {
 
 func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 	id := randomID()
+	entry := &streamEntry{ch: make(chan *gen.CoordinatorMessage, 256)}
+
 	s.mu.Lock()
-	s.streams[id] = stream
+	s.streams[id] = entry
 	s.mu.Unlock()
+
+	done := make(chan struct{})
 	defer func() {
+		close(done)
 		s.mu.Lock()
 		delete(s.streams, id)
 		s.mu.Unlock()
+	}()
+
+	go func() {
+		for {
+			select {
+			case msg := <-entry.ch:
+				if s.bytesOut != nil {
+					s.bytesOut.Add(float64(proto.Size(msg)))
+				}
+				_ = stream.Send(msg)
+			case <-done:
+				return
+			}
+		}
 	}()
 
 	for {
@@ -58,7 +82,8 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 	}
 }
 
-// Broadcast sends keep decision to all connected processors. Best-effort.
+// Broadcast sends keep decision to all connected processors. Best-effort: slow or
+// backpressured streams are skipped (their channel is full).
 func (s *Server) Broadcast(traceID string) {
 	tid, _ := hex.DecodeString(traceID)
 	msg := &gen.CoordinatorMessage{
@@ -67,14 +92,13 @@ func (s *Server) Broadcast(traceID string) {
 		},
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := proto.Size(msg)
-	for _, stream := range s.streams {
-		_ = stream.Send(msg)
+	for _, entry := range s.streams {
+		select {
+		case entry.ch <- msg:
+		default:
+		}
 	}
-	if s.bytesOut != nil {
-		s.bytesOut.Add(float64(n * len(s.streams)))
-	}
+	s.mu.Unlock()
 }
 
 func randomID() string {
