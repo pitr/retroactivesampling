@@ -2,25 +2,46 @@ package evaluator_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.uber.org/zap"
 
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 )
 
-func TestLatencyEvaluator_AboveThreshold(t *testing.T) {
-	e := &evaluator.LatencyEvaluator{Threshold: 5 * time.Second}
-	assert.True(t, e.Evaluate(makeTraces(ptrace.StatusCodeOk, 6000)))
+func TestLatency_AboveThreshold(t *testing.T) {
+	ev := evaluator.NewLatency(zap.NewNop(), 5000, 0)
+	d, err := ev.Evaluate(makeSpan(ptrace.StatusCodeOk, 6000))
+	require.NoError(t, err)
+	assert.Equal(t, evaluator.Sampled, d)
 }
 
-func TestLatencyEvaluator_BelowThreshold(t *testing.T) {
-	e := &evaluator.LatencyEvaluator{Threshold: 5 * time.Second}
-	assert.False(t, e.Evaluate(makeTraces(ptrace.StatusCodeOk, 1000)))
+func TestLatency_BelowThreshold(t *testing.T) {
+	ev := evaluator.NewLatency(zap.NewNop(), 5000, 0)
+	d, err := ev.Evaluate(makeSpan(ptrace.StatusCodeOk, 1000))
+	require.NoError(t, err)
+	assert.Equal(t, evaluator.NotSampled, d)
 }
 
-func TestLatencyEvaluator_AtThreshold(t *testing.T) {
-	e := &evaluator.LatencyEvaluator{Threshold: 5 * time.Second}
-	assert.True(t, e.Evaluate(makeTraces(ptrace.StatusCodeOk, 5000)))
+func TestLatency_AtThreshold(t *testing.T) {
+	ev := evaluator.NewLatency(zap.NewNop(), 5000, 0)
+	d, err := ev.Evaluate(makeSpan(ptrace.StatusCodeOk, 5000))
+	require.NoError(t, err)
+	assert.Equal(t, evaluator.Sampled, d)
+}
+
+func TestLatency_UpperBound(t *testing.T) {
+	ev := evaluator.NewLatency(zap.NewNop(), 1000, 3000)
+	d, err := ev.Evaluate(makeSpan(ptrace.StatusCodeOk, 2000))
+	require.NoError(t, err)
+	assert.Equal(t, evaluator.Sampled, d)
+}
+
+func TestLatency_AboveUpperBound(t *testing.T) {
+	ev := evaluator.NewLatency(zap.NewNop(), 1000, 3000)
+	d, err := ev.Evaluate(makeSpan(ptrace.StatusCodeOk, 5000))
+	require.NoError(t, err)
+	assert.Equal(t, evaluator.NotSampled, d)
 }

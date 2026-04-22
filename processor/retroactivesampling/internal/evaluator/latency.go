@@ -1,25 +1,35 @@
 package evaluator
 
 import (
-	"time"
-
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.uber.org/zap"
 )
 
-type LatencyEvaluator struct {
-	Threshold time.Duration
+type latency struct {
+	logger           *zap.Logger
+	thresholdMs      int64
+	upperThresholdMs int64
 }
 
-func (e *LatencyEvaluator) Evaluate(t ptrace.Traces) bool {
-	for _, rs := range t.ResourceSpans().All() {
-		for _, ss := range rs.ScopeSpans().All() {
-			for _, span := range ss.Spans().All() {
-				d := span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime())
-				if d >= e.Threshold {
-					return true
-				}
-			}
+func NewLatency(logger *zap.Logger, thresholdMs, upperThresholdMs int64) Evaluator {
+	return &latency{logger: logger, thresholdMs: thresholdMs, upperThresholdMs: upperThresholdMs}
+}
+
+func (l *latency) Evaluate(t ptrace.Traces) (Decision, error) {
+	l.logger.Debug("Evaluating spans in latency filter")
+	var minTime, maxTime pcommon.Timestamp
+	return hasSpanWithCondition(t, func(span ptrace.Span) bool {
+		if minTime == 0 || span.StartTimestamp() < minTime {
+			minTime = span.StartTimestamp()
 		}
-	}
-	return false
+		if maxTime == 0 || span.EndTimestamp() > maxTime {
+			maxTime = span.EndTimestamp()
+		}
+		d := maxTime.AsTime().Sub(minTime.AsTime())
+		if l.upperThresholdMs == 0 {
+			return d.Milliseconds() >= l.thresholdMs
+		}
+		return l.thresholdMs < d.Milliseconds() && d.Milliseconds() <= l.upperThresholdMs
+	}), nil
 }
