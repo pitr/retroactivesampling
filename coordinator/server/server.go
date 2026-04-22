@@ -19,19 +19,23 @@ type streamEntry struct {
 
 type Server struct {
 	gen.UnimplementedCoordinatorServer
-	mu       sync.Mutex
-	streams  map[string]*streamEntry
-	onNotify func(traceID string)
-	bytesIn  Counter
-	bytesOut Counter
+	mu           sync.Mutex
+	streams      map[string]*streamEntry
+	onNotify     func(traceID string)
+	bytesIn      Counter
+	bytesOut     Counter
+	droppedSends Counter
+	sendErrors   Counter
 }
 
-func New(onNotify func(traceID string), bytesIn, bytesOut Counter) *Server {
+func New(onNotify func(traceID string), bytesIn, bytesOut, droppedSends, sendErrors Counter) *Server {
 	return &Server{
-		streams:  make(map[string]*streamEntry),
-		onNotify: onNotify,
-		bytesIn:  bytesIn,
-		bytesOut: bytesOut,
+		streams:      make(map[string]*streamEntry),
+		onNotify:     onNotify,
+		bytesIn:      bytesIn,
+		bytesOut:     bytesOut,
+		droppedSends: droppedSends,
+		sendErrors:   sendErrors,
 	}
 }
 
@@ -45,10 +49,12 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 
 	done := make(chan struct{})
 	defer func() {
-		close(done)
+		// Remove from map first so Broadcast stops pushing to this entry,
+		// then signal the sender goroutine. This bounds what's left in entry.ch.
 		s.mu.Lock()
 		delete(s.streams, id)
 		s.mu.Unlock()
+		close(done)
 	}()
 
 	go func() {
@@ -58,8 +64,13 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 				if s.bytesOut != nil {
 					s.bytesOut.Add(float64(proto.Size(msg)))
 				}
-				_ = stream.Send(msg)
+				if err := stream.Send(msg); err != nil && s.sendErrors != nil {
+					s.sendErrors.Add(1)
+				}
 			case <-done:
+				if n := len(entry.ch); n > 0 && s.droppedSends != nil {
+					s.droppedSends.Add(float64(n))
+				}
 				return
 			}
 		}
@@ -96,6 +107,9 @@ func (s *Server) Broadcast(traceID string) {
 		select {
 		case entry.ch <- msg:
 		default:
+			if s.droppedSends != nil {
+				s.droppedSends.Add(1)
+			}
 		}
 	}
 	s.mu.Unlock()

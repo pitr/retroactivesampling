@@ -51,7 +51,15 @@ func main() {
 		Name: "coordinator_interesting_traces_total",
 		Help: "Total unique interesting traces seen by this coordinator.",
 	})
-	prometheus.MustRegister(bytesIn, bytesOut, interestingTraces)
+	droppedSends := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "coordinator_broadcast_drops_total",
+		Help: "Total keep decisions dropped because a processor stream's send buffer was full.",
+	})
+	sendErrors := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "coordinator_broadcast_send_errors_total",
+		Help: "Total errors returned by stream.Send when broadcasting keep decisions.",
+	})
+	prometheus.MustRegister(bytesIn, bytesOut, interestingTraces, droppedSends, sendErrors)
 
 	if cfg.MetricsListen != "" {
 		mux := http.NewServeMux()
@@ -77,7 +85,7 @@ func main() {
 		} else if novel {
 			interestingTraces.Add(1)
 		}
-	}, bytesIn, bytesOut)
+	}, bytesIn, bytesOut, droppedSends, sendErrors)
 
 	// All coordinators (including this one) subscribe to the Redis channel.
 	// When this instance publishes a trace ID, it arrives back via Subscribe

@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] coordinator Broadcast silently drops send errors (`_ = stream.Send(msg)`); add a Prometheus counter for failed/dropped sends per stream for observability.
 - [ ] coordinator redis_addr config only supports a single address; support read replicas so coordinators can subscribe to replicas instead of the primary, distributing Redis outbound fan-out (I × M × C total) across replica nodes.
 
 ## Large items
