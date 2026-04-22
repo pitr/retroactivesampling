@@ -109,7 +109,11 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		log.Printf("shutting down")
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		timeout := cfg.ShutdownTimeout
+		if timeout == 0 {
+			timeout = 10 * time.Second
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), timeout)
 		defer stopCancel()
 		done := make(chan struct{})
 		go func() {

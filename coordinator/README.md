@@ -28,6 +28,7 @@ metrics_listen: :9091     # Prometheus metrics endpoint (optional)
 | `redis_addr` | yes | Redis `host:port` |
 | `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
+| `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
 
 ## Run
 
