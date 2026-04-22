@@ -9,6 +9,10 @@
 - [ ] add guidance to README on how to choose `max_buffer_bytes` and `max_interest_cache_entries`. For bytes, mention that they can use bytes ingested per collector to come up with a desired duration for how long traces are kept in buffer, thus impacting full trace ingestion. For entries, probably just mention that the default should be sufficient.
 - [ ] tail sampling processor keeps component.Host for some reason, see if our processor needs it also.
 - [ ] update coordinator readme with performance info. Say that the traffic it receives is on multiple orders lower than span traffic.
+- [ ] measure interesting traces per second in coordinator (since it knows when a new unique interesting trace is found)
+- [ ] coordinator Broadcast holds the mutex for the full duration of all stream.Send() calls; a single slow (backpressured) stream stalls the entire coordinator. Replace with per-stream goroutine + buffered channel pattern so Broadcast only does non-blocking channel pushes under the lock, matching the pattern already used in the processor client's sendCh. Update risks in PERFORMANCE.md when done.
+- [ ] coordinator Broadcast silently drops send errors (`_ = stream.Send(msg)`); add a Prometheus counter for failed/dropped sends per stream for observability.
+- [ ] coordinator redis_addr config only supports a single address; support read replicas so coordinators can subscribe to replicas instead of the primary, distributing Redis outbound fan-out (I × M × C total) across replica nodes.
 
 ## Large items
 
