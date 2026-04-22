@@ -16,24 +16,54 @@ make build
 ## Configuration
 
 ```yaml
-grpc_listen: :9090        # gRPC listen address for processor connections
-redis_addr: redis:6379    # Redis primary address (writes)
-redis_replica_addrs:      # Redis replica addresses for subscriptions (optional)
-  - replica1:6379
-  - replica2:6379
-decided_key_ttl: 60s      # dedup key TTL — must exceed your trace window
-metrics_listen: :9091     # Prometheus metrics endpoint (optional)
-shutdown_timeout: 10s     # graceful shutdown timeout (optional)
+grpc_listen: :9090
+decided_key_ttl: 60s      # must exceed your trace window
+metrics_listen: :9091     # optional
+shutdown_timeout: 10s     # optional, default 10s
+
+redis_primary:
+  endpoint: redis:6379
+  username: user           # optional
+  password: secret         # optional
+  tls:
+    enabled: true
+    ca_file: /etc/ssl/ca.crt
+    cert_file: /etc/ssl/client.crt
+    key_file: /etc/ssl/client.key
+
+redis_replicas:            # optional; each coordinator picks one at random for SUBSCRIBE
+  - endpoint: replica1:6379
+  - endpoint: replica2:6379
 ```
 
 | Key | Required | Description |
 |---|---|---|
 | `grpc_listen` | yes | `host:port` to listen for processor gRPC connections |
-| `redis_addr` | yes | Redis primary `host:port` (used for writes: SET NX + PUBLISH) |
-| `redis_replica_addrs` | no | List of Redis replica `host:port` addresses. Each coordinator instance picks one at random to subscribe to, distributing the Redis outbound fan-out across replicas. Falls back to primary if not set. |
 | `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
+| `redis_primary` | yes | Redis primary connection (used for SET NX + PUBLISH) |
+| `redis_replicas` | no | Redis replica connections. Each coordinator picks one at random for SUBSCRIBE, distributing Redis outbound fan-out across replicas. Falls back to primary if not set. |
+
+**`redis_primary` / `redis_replicas[]` fields:**
+
+| Key | Description |
+|---|---|
+| `endpoint` | `host:port` (or socket path if `transport: unix`) |
+| `transport` | `tcp` (default) or `unix` |
+| `client_name` | Name sent via `CLIENT SETNAME` on each connection; visible in `CLIENT LIST` for monitoring |
+| `username` | ACL username |
+| `password` | Password |
+| `db` | Database number (default `0`) |
+| `max_retries` | Max retries before giving up (`-1` disables, default `3`) |
+| `dial_timeout` | Connection timeout (default `5s`) |
+| `read_timeout` | Socket read timeout (default `3s`) |
+| `write_timeout` | Socket write timeout (default `3s`) |
+| `tls.enabled` | Enable TLS |
+| `tls.insecure_skip_verify` | Skip server certificate verification |
+| `tls.ca_file` | Path to CA certificate PEM |
+| `tls.cert_file` | Path to client certificate PEM |
+| `tls.key_file` | Path to client key PEM |
 
 ## Run
 

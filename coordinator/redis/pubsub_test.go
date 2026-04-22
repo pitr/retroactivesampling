@@ -43,7 +43,8 @@ func startRedis(t *testing.T) string {
 
 func TestPublishSubscribe(t *testing.T) {
 	addr := startRedis(t)
-	ps := rds.New(addr, 60*time.Second)
+	ps, err := rds.New(rds.Config{Endpoint: addr}, 60*time.Second)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -69,7 +70,8 @@ func TestPublishSubscribe(t *testing.T) {
 
 func TestPublishDeduplication(t *testing.T) {
 	addr := startRedis(t)
-	ps := rds.New(addr, 60*time.Second)
+	ps, err := rds.New(rds.Config{Endpoint: addr}, 60*time.Second)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	ctx := context.Background()

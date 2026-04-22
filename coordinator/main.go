@@ -16,9 +16,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
-	gen "pitr.ca/retroactivesampling/proto"
-	rds "pitr.ca/retroactivesampling/coordinator/redis"
+	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
+	gen "pitr.ca/retroactivesampling/proto"
 )
 
 func main() {
@@ -33,8 +33,8 @@ func main() {
 	if cfg.GRPCListen == "" {
 		log.Fatal("grpc_listen is required")
 	}
-	if cfg.RedisAddr == "" {
-		log.Fatal("redis_addr is required")
+	if cfg.RedisPrimary.Endpoint == "" {
+		log.Fatal("redis_primary.endpoint is required")
 	}
 	if cfg.DecidedKeyTTL == 0 {
 		log.Fatal("decided_key_ttl is required")
@@ -73,14 +73,18 @@ func main() {
 		}()
 	}
 
-	var ps *rds.PubSub
-	if len(cfg.RedisReplicaAddrs) > 0 {
-		replica := cfg.RedisReplicaAddrs[randIntn(len(cfg.RedisReplicaAddrs))]
-		log.Printf("subscribing to Redis replica %s", replica)
-		ps = rds.NewWithReplica(cfg.RedisAddr, replica, cfg.DecidedKeyTTL)
+	var ps *redis.PubSub
+	if len(cfg.RedisReplicas) > 0 {
+		replicaCfg := cfg.RedisReplicas[rand.Intn(len(cfg.RedisReplicas))]
+		log.Printf("subscribing to Redis replica %s", replicaCfg.Endpoint)
+		ps, err = redis.NewWithReplica(cfg.RedisPrimary, replicaCfg, cfg.DecidedKeyTTL)
 	} else {
-		ps = rds.New(cfg.RedisAddr, cfg.DecidedKeyTTL)
+		ps, err = redis.New(cfg.RedisPrimary, cfg.DecidedKeyTTL)
 	}
+	if err != nil {
+		log.Fatalf("redis: %v", err)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -143,5 +147,3 @@ func main() {
 		log.Fatalf("serve: %v", err)
 	}
 }
-
-func randIntn(n int) int { return rand.Intn(n) }
