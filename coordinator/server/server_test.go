@@ -62,7 +62,8 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 
 	msg, err := stream.Recv()
 	require.NoError(t, err)
-	d := msg.GetDecision()
-	require.NotNil(t, d)
-	assert.Equal(t, traceBytes, d.TraceId)
+	b := msg.GetBatch()
+	require.NotNil(t, b)
+	require.Len(t, b.TraceIds, 1)
+	assert.Equal(t, traceBytes, b.TraceIds[0])
 }

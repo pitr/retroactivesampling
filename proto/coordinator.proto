@@ -15,6 +15,7 @@ message ProcessorMessage {
 message CoordinatorMessage {
   oneof payload {
     TraceDecision decision = 1;
+    BatchTraceDecision batch = 2;
   }
 }
 
@@ -24,4 +25,8 @@ message NotifyInteresting {
 
 message TraceDecision {
   bytes trace_id = 1;
+}
+
+message BatchTraceDecision {
+  repeated bytes trace_ids = 1;
 }

@@ -52,8 +52,8 @@ func (f *fakeServer) Connect(stream gen.Coordinator_ConnectServer) error {
 func (f *fakeServer) broadcast(traceID string) {
 	tid, _ := hex.DecodeString(traceID)
 	msg := &gen.CoordinatorMessage{
-		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: tid},
+		Payload: &gen.CoordinatorMessage_Batch{
+			Batch: &gen.BatchTraceDecision{TraceIds: [][]byte{tid}},
 		},
 	}
 	f.mu.Lock()

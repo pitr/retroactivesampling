@@ -51,15 +51,15 @@ func (s *stubCoordinator) Connect(stream gen.Coordinator_ConnectServer) error {
 }
 
 func (s *stubCoordinator) broadcast(traceID []byte) {
-	decision := &gen.CoordinatorMessage{
-		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: traceID},
+	msg := &gen.CoordinatorMessage{
+		Payload: &gen.CoordinatorMessage_Batch{
+			Batch: &gen.BatchTraceDecision{TraceIds: [][]byte{traceID}},
 		},
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, stream := range s.streams {
-		_ = stream.Send(decision)
+		_ = stream.Send(msg)
 	}
 }
 

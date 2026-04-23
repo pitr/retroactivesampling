@@ -101,10 +101,12 @@ func (c *Client) connect() error {
 				recvErr <- err
 				return
 			}
-			if d := msg.GetDecision(); d != nil {
-				tid := hex.EncodeToString(d.TraceId)
-				c.logger.Debug("coordinator: received decision", zap.String("trace_id", tid))
-				c.handler(tid)
+			if b := msg.GetBatch(); b != nil {
+				for _, raw := range b.TraceIds {
+					tid := hex.EncodeToString(raw)
+					c.logger.Debug("coordinator: received decision", zap.String("trace_id", tid))
+					c.handler(tid)
+				}
 			}
 		}
 	}()
