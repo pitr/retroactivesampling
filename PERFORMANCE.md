@@ -121,3 +121,101 @@ increase factor:              S / p
 ```
 
 Example (I=10k, S=30, p=0.05): 6M reports/s fleet-wide vs. 10k today — 600× more inbound traffic — and 95% of those reports are for traces that will never be sampled and whose mapping entries are never used. The coordinator would also need to maintain a live traceID → collector set, sized for the full trace window. The outbound savings (333×) do not outweigh the inbound cost and added coordinator complexity.
+
+## Daisy-Chain Topology
+
+A local coordinator per cluster sits between local collectors and a central coordinator.
+Collectors connect to their local coordinator; local coordinators connect upstream to a central
+coordinator. The chain can be arbitrarily deep — each level uses the same gRPC protocol.
+
+### Parameters
+
+| Symbol | Meaning | Example value |
+|--------|---------|---------------|
+| K | Clusters (= local coordinators in a 1-per-cluster deployment) | 100 |
+| P/K | Collectors per cluster | 100 |
+
+All other parameters unchanged from the flat topology table above.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph cluster1["Cluster 1 (P/K collectors)"]
+        P1["Processors"]
+    end
+    subgraph cluster2["Cluster 2 (P/K collectors)"]
+        P2["Processors"]
+    end
+    LC1["Local Coordinator 1"]
+    LC2["Local Coordinator 2"]
+    CC["Central Coordinator"]
+    R[("Redis\npub/sub")]
+
+    P1 -->|NotifyInteresting| LC1
+    P2 -->|NotifyInteresting| LC2
+    LC1 -->|NotifyInteresting| CC
+    LC2 -->|NotifyInteresting| CC
+    CC -->|SET NX + PUBLISH| R
+    R -->|subscription| CC
+    CC -->|BatchTraceDecision| LC1
+    CC -->|BatchTraceDecision| LC2
+    LC1 -->|BatchTraceDecision| P1
+    LC2 -->|BatchTraceDecision| P2
+```
+
+### Traffic formulas
+
+#### Collector → Local Coordinator (NotifyInteresting, intra-cluster)
+
+Unchanged from flat topology — one notify per interesting trace per collector:
+
+```
+fleet: I × M
+```
+
+#### Local → Central (NotifyInteresting, cross-cluster)
+
+Local coordinators have no dedup; they forward every notify they receive.
+In the worst case all P/K collectors in a cluster see the same trace:
+
+```
+per local (worst case): I × (P/K) × M
+fleet → central:        I × P × M   (same as flat notify; risk remains low)
+```
+
+In practice, each trace is seen by S collectors spread across ~S/K clusters (S=30, K=100 → ~0.3 clusters on average, i.e., most traces touch at most one cluster). Fleet-wide forwarded notifies ≈ `I × M × (S/K * K)` = `I × S × M` — the same order as the existing collector→coordinator path with direct connections.
+
+#### Central → Local Coordinators (BatchTraceDecision, cross-cluster)
+
+Central broadcasts to K local coordinators, not P collectors:
+
+```
+total cross-cluster: I × K × M
+```
+
+Example (I=10k, K=100, M=20 B): **2 MB/s** — vs. **2 GB/s** in the flat topology.
+
+**Risk:** low. K grows only when new clusters are added, not with collector count within a cluster.
+
+#### Local Coordinator → Local Collectors (BatchTraceDecision, intra-cluster)
+
+```
+per local coordinator: I × (P/K) × M
+fleet total:           I × P × M   (unchanged)
+```
+
+Example (I=10k, P/K=100, M=20 B): 20 MB/s per local coordinator, 2 GB/s fleet total.
+
+### Summary
+
+| Traffic path | Flat topology | Daisy-chain |
+|---|---|---|
+| Cross-cluster broadcast | `I × P × M` = 2 GB/s | `I × K × M` = 2 MB/s |
+| Per-local-coordinator broadcast | — | `I × (P/K) × M` = 20 MB/s |
+| Fleet-total broadcast | 2 GB/s | 2 GB/s (unchanged) |
+| Notify inbound at central | `I × M` = 200 KB/s | ≤ `I × S × M` ≈ 6 MB/s |
+
+Cross-cluster broadcast reduction: **P/K = 1000×** for this example. Fleet-total bytes
+are unchanged — the fan-out is two-stage. The expensive cross-datacenter hop carries
+K messages per decision instead of P.
