@@ -1,6 +1,6 @@
 # Retroactive Sampling
 
-Tail-based sampling for OpenTelemetry without a central aggregator.
+Tail-based sampling for OpenTelemetry without a central span aggregator.
 
 Spans are buffered on disk per collector host. A trace is kept if any collector sees it as interesting (error status, high latency). Coordinators propagate that decision to all other collectors via Redis pub/sub.
 
@@ -24,7 +24,7 @@ Traditional tail sampling (e.g. the `tailsampling` OTel Collector processor) rou
 - **A routing layer is required** (e.g. load-balancing exporter) to consistently hash traces to the same central collector.
 - **Large centralized memory** — the central fleet must hold all in-flight traces in RAM for the full tail window.
 
-Retroactive sampling avoids the forwarding hop entirely: spans stay on the collector that received them. Only a 20-byte trace ID is sent when a trace becomes interesting, and a small keep/drop decision is broadcast back.
+Retroactive sampling avoids the forwarding hop entirely: spans stay on the collector that received them. Only a 20-byte trace ID is sent when a trace becomes interesting, and a small keep decision is broadcast back.
 
 **Disk instead of memory:** buffered spans are written to an mmap'd file on each collector's local disk rather than held in RAM. The tail-window buffer cost is spread across the entire existing collector fleet instead of concentrated in a dedicated central cluster.
 
