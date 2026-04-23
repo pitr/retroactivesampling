@@ -20,29 +20,20 @@ type PubSub struct {
 	ttl         time.Duration
 }
 
-func New(cfg Config, ttl time.Duration) (*PubSub, error) {
-	opts, err := cfg.options()
-	if err != nil {
-		return nil, err
-	}
-	c := redis.NewClient(opts)
-	return &PubSub{writeClient: c, readClient: c, ttl: ttl}, nil
-}
-
-func NewWithReplica(writeCfg, readCfg Config, ttl time.Duration) (*PubSub, error) {
+func New(writeCfg Config, readCfg *Config, ttl time.Duration) (*PubSub, error) {
 	writeOpts, err := writeCfg.options()
 	if err != nil {
 		return nil, err
+	}
+	wc := redis.NewClient(writeOpts)
+	if readCfg == nil {
+		return &PubSub{writeClient: wc, readClient: wc, ttl: ttl}, nil
 	}
 	readOpts, err := readCfg.options()
 	if err != nil {
 		return nil, err
 	}
-	return &PubSub{
-		writeClient: redis.NewClient(writeOpts),
-		readClient:  redis.NewClient(readOpts),
-		ttl:         ttl,
-	}, nil
+	return &PubSub{writeClient: wc, readClient: redis.NewClient(readOpts), ttl: ttl}, nil
 }
 
 // Publish publishes traceID if not already seen (SET NX + PUBLISH). Returns true if newly published.

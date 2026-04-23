@@ -94,13 +94,13 @@ func main() {
 		if m.RedisPrimary.Endpoint == "" {
 			fatal("distributed mode: redis_primary.endpoint is required")
 		}
+		var replicaCfg *redis.Config
 		if len(m.RedisReplicas) > 0 {
-			replicaCfg := m.RedisReplicas[rand.Intn(len(m.RedisReplicas))]
-			slog.Info("subscribing to Redis replica", "addr", replicaCfg.Endpoint)
-			ps, err = redis.NewWithReplica(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL)
-		} else {
-			ps, err = redis.New(m.RedisPrimary, m.DecidedKeyTTL)
+			rc := m.RedisReplicas[rand.Intn(len(m.RedisReplicas))]
+			replicaCfg = &rc
+			slog.Info("subscribing to Redis replica", "addr", rc.Endpoint)
 		}
+		ps, err = redis.New(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL)
 		if err != nil {
 			fatal("redis", "err", err)
 		}
