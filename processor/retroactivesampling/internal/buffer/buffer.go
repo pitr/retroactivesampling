@@ -43,8 +43,8 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 	if evictObserver == nil {
 		evictObserver = func(time.Duration) {}
 	}
-	if maxBytes <= 0 {
-		return nil, fmt.Errorf("maxBytes must be positive, got %d", maxBytes)
+	if maxBytes < hdrSize*2 {
+		return nil, fmt.Errorf("maxBytes must be at least %d, got %d", hdrSize*2, maxBytes)
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 		return nil, err
@@ -113,23 +113,25 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	}
 
 	if b.wHead+recSize > b.maxBytes {
-		b.wrapLocked()
+		remaining := b.maxBytes - b.wHead
+		if remaining >= hdrSize {
+			var hdr [hdrSize]byte
+			binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
+			copy(b.data[b.wHead:], hdr[:])
+		}
+		b.used += remaining
+		b.wHead = 0
 	}
 
 	for b.used+recSize > b.maxBytes {
-		if err := b.sweepOneLocked(insertedAt); err != nil {
-			return err
-		}
+		b.sweepOneLocked(insertedAt)
 	}
 
-	rec := make([]byte, hdrSize+len(delta))
-	copy(rec[:32], traceID)
-	binary.BigEndian.PutUint64(rec[32:40], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(rec[40:44], uint32(len(delta)))
-	copy(rec[hdrSize:], delta)
-
 	offset := b.wHead
-	copy(b.data[offset:], rec)
+	copy(b.data[offset:], traceID)
+	binary.BigEndian.PutUint64(b.data[offset+32:], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(b.data[offset+40:], uint32(len(delta)))
+	copy(b.data[offset+hdrSize:], delta)
 
 	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(delta))})
 	b.wHead += recSize
@@ -137,27 +139,15 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	return nil
 }
 
-func (b *SpanBuffer) wrapLocked() {
-	remaining := b.maxBytes - b.wHead
-	if remaining >= hdrSize {
-		var hdr [hdrSize]byte
-		binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
-		copy(b.data[b.wHead:], hdr[:])
-	}
-	b.used += remaining
-	b.wHead = 0
-}
-
-func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
+func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	if b.rHead >= b.maxBytes {
 		b.rHead = 0
 	}
 	if b.rHead+hdrSize > b.maxBytes {
-		remaining := b.maxBytes - b.rHead
-		b.used -= remaining
+		b.used -= b.maxBytes - b.rHead
 		b.rHead = 0
 		b.madviseSwept()
-		return nil
+		return
 	}
 
 	hdr := b.data[b.rHead : b.rHead+hdrSize]
@@ -168,7 +158,7 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
 		b.used -= recSize
 		b.rHead = 0
 		b.madviseSwept()
-		return nil
+		return
 	}
 
 	traceID := string(bytes.TrimRight(hdr[:32], "\x00"))
@@ -187,7 +177,6 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
 		b.rHead = 0
 	}
 	b.madviseSwept()
-	return nil
 }
 
 // madviseSwept releases swept pages from RSS. Only issues the syscall when
