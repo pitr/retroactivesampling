@@ -95,6 +95,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("redis: %v", err)
 		}
+	default:
+		log.Fatalf("unknown mode type %T", activeMode)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
