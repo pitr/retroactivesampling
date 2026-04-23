@@ -48,7 +48,8 @@ func New(endpoint string) *PubSub {
 func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
 	select {
 	case p.sendCh <- traceID:
-	default: // best-effort: drop if buffer full during reconnect
+	default:
+		log.Printf("upstream: send buffer full, dropping notify for trace %s", traceID)
 	}
 	return true, nil
 }

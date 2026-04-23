@@ -35,13 +35,15 @@ func main() {
 	if cfg.GRPCListen == "" {
 		log.Fatal("grpc_listen is required")
 	}
-	if cfg.DecidedKeyTTL == 0 {
-		log.Fatal("decided_key_ttl is required")
-	}
 
 	activeMode, err := cfg.Mode.active()
 	if err != nil {
 		log.Fatalf("config mode: %v", err)
+	}
+	if _, ok := activeMode.(*UpstreamConfig); !ok {
+		if cfg.DecidedKeyTTL == 0 {
+			log.Fatal("decided_key_ttl is required")
+		}
 	}
 
 	bytesIn := prometheus.NewCounter(prometheus.CounterOpts{
