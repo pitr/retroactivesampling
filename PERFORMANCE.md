@@ -171,7 +171,9 @@ flowchart LR
 Unchanged from flat topology — one notify per interesting trace per collector:
 
 ```
-fleet: I × M
+per interesting trace: one collector sends a notify to its local coordinator
+fleet: I × M          (typical; same as flat topology)
+fleet (worst case):   I × S × M  (if all S collectors that hold trace spans each independently trigger a notify)
 ```
 
 #### Local → Central (NotifyInteresting, cross-cluster)
@@ -194,7 +196,7 @@ Central broadcasts to K local coordinators, not P collectors:
 total cross-cluster: I × K × M
 ```
 
-Example (I=10k, K=100, M=20 B): **2 MB/s** — vs. **2 GB/s** in the flat topology.
+Example (I=10k, K=100, M=20 B): **20 MB/s** — vs. **2 GB/s** in the flat topology.
 
 **Risk:** low. K grows only when new clusters are added, not with collector count within a cluster.
 
@@ -211,11 +213,11 @@ Example (I=10k, P/K=100, M=20 B): 20 MB/s per local coordinator, 2 GB/s fleet to
 
 | Traffic path | Flat topology | Daisy-chain |
 |---|---|---|
-| Cross-cluster broadcast | `I × P × M` = 2 GB/s | `I × K × M` = 2 MB/s |
+| Cross-cluster broadcast | `I × P × M` = 2 GB/s | `I × K × M` = 20 MB/s |
 | Per-local-coordinator broadcast | — | `I × (P/K) × M` = 20 MB/s |
 | Fleet-total broadcast | 2 GB/s | 2 GB/s (unchanged) |
 | Notify inbound at central | `I × M` = 200 KB/s | ≤ `I × S × M` ≈ 6 MB/s |
 
-Cross-cluster broadcast reduction: **P/K = 1000×** for this example. Fleet-total bytes
+Cross-cluster broadcast reduction: **P/K = 100×** for this example. Fleet-total bytes
 are unchanged — the fan-out is two-stage. The expensive cross-datacenter hop carries
 K messages per decision instead of P.
