@@ -2,9 +2,10 @@
 
 ## Small items
 
-- [ ] if coordinator does not have redis configured, it should operate in a single node mode and should handle broadcasting itself. Update coordinator's readme with this information.
 
 ## Large items
 
 - [ ] with small messages dominating broadcast, coordinator might hit a "Packets Per Second" wall. Check if this is true, and find ways to optimize it.
+- [ ] coordinator should support single-node mode where redis is not used. It should work the same way, including respecting `decided_key_ttl`. Update coordinator's readme with this information.
+- [ ] to combat high network volume of broadcasts when number of collectors is high, design coordinators to be daisy-chained (eg. collectors in one cluster can share a single coordinator that proxies everything to the central coordinator).
 - [ ] coordinator should also support HTTP, processor should be able to choose through configs.
