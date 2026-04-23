@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] with a batch-related change to coordinator.proto, does the 20 byte assumption in PERFORMANCE.md still make sense?
 
 ## Large items
 
