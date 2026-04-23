@@ -24,17 +24,20 @@ type ModeConfig struct {
 }
 
 func (m ModeConfig) active() (any, error) {
-	var results []any
+	var n int
+	var result any
 	if m.Single != nil {
-		results = append(results, m.Single)
+		n++
+		result = m.Single
 	}
 	if m.Distributed != nil {
-		results = append(results, m.Distributed)
+		n++
+		result = m.Distributed
 	}
-	if len(results) != 1 {
-		return nil, fmt.Errorf("exactly one mode must be configured (got %d)", len(results))
+	if n != 1 {
+		return nil, fmt.Errorf("exactly one mode must be configured (got %d)", n)
 	}
-	return results[0], nil
+	return result, nil
 }
 
 type SingleConfig struct{}
