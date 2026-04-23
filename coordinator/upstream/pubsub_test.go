@@ -87,7 +87,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 
 	novel, err := ps.Publish(t.Context(), traceHex)
 	require.NoError(t, err)
-	assert.True(t, novel)
+	assert.False(t, novel)
 
 	select {
 	case id := <-mock.notified:
@@ -97,7 +97,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	}
 }
 
-func TestPublishAlwaysReturnsTrue(t *testing.T) {
+func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
@@ -107,7 +107,7 @@ func TestPublishAlwaysReturnsTrue(t *testing.T) {
 	for range 3 {
 		novel, err := ps.Publish(t.Context(), traceHex)
 		require.NoError(t, err)
-		assert.True(t, novel, "upstream.PubSub has no local dedup — must always return true")
+		assert.False(t, novel, "upstream.PubSub has no local dedup — novel count tracked upstream")
 	}
 }
 
