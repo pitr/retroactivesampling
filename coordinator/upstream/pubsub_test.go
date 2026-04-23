@@ -78,6 +78,8 @@ func startGRPCServer(t *testing.T, srv gen.CoordinatorServer) string {
 
 const traceHex = "aabbccdd11223344aabbccdd11223344"
 
+var traceBytes, _ = hex.DecodeString(traceHex)
+
 func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
@@ -85,7 +87,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	ps := upstream.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
 
-	novel, err := ps.Publish(t.Context(), traceHex)
+	novel, err := ps.Publish(t.Context(), traceBytes)
 	require.NoError(t, err)
 	assert.False(t, novel)
 
@@ -105,7 +107,7 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	t.Cleanup(func() { _ = ps.Close() })
 
 	for range 3 {
-		novel, err := ps.Publish(t.Context(), traceHex)
+		novel, err := ps.Publish(t.Context(), traceBytes)
 		require.NoError(t, err)
 		assert.False(t, novel, "upstream.PubSub has no local dedup — novel count tracked upstream")
 	}
@@ -118,26 +120,25 @@ func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
 	ps := upstream.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
 
-	received := make(chan string, 1)
+	received := make(chan []byte, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	// Subscribe before connection is established to guarantee handler is registered first.
-	go func() { _ = ps.Subscribe(ctx, func(id string) { received <- id }) }()
-	time.Sleep(50 * time.Millisecond) // let goroutine run and register handler
+	// Subscribe before waiting for connection — handler is registered synchronously inside
+	// Subscribe before it blocks, so by the time the gRPC stream is established the handler
+	// is guaranteed to be in place.
+	go func() { _ = ps.Subscribe(ctx, func(id []byte) { received <- id }) }()
 
-	// Wait for connection before sending decision.
 	select {
 	case <-mock.connected:
 	case <-time.After(3 * time.Second):
 		t.Fatal("upstream connection not established")
 	}
 
-	traceBytes, _ := hex.DecodeString(traceHex)
 	mock.decisionCh <- traceBytes
 
 	select {
 	case id := <-received:
-		assert.Equal(t, traceHex, id)
+		assert.Equal(t, traceBytes, id)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout: Subscribe handler not called with decision")
 	}
@@ -148,7 +149,7 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := lis.Addr().String()
-	lis.Close() // immediately release so nothing is listening
+	_ = lis.Close() // immediately release so nothing is listening
 
 	ps := upstream.New(addr)
 	done := make(chan struct{})

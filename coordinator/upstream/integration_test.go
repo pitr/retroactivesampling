@@ -20,11 +20,11 @@ import (
 func TestIntegrationLocalToCentral(t *testing.T) {
 	// Central coordinator: single-node with memory PubSub.
 	memPS := memory.New(time.Minute)
-	centralSrv := server.New(func(traceID string) {
+	centralSrv := server.New(func(traceID []byte) {
 		_, _ = memPS.Publish(t.Context(), traceID)
 	}, nil, nil, nil, nil)
 	go func() {
-		_ = memPS.Subscribe(t.Context(), func(id string) { centralSrv.Broadcast(id) })
+		_ = memPS.Subscribe(t.Context(), func(id []byte) { centralSrv.Broadcast(id) })
 	}()
 	centralAddr := startGRPCServer(t, centralSrv)
 
@@ -32,14 +32,17 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 	localPS := upstream.New(centralAddr)
 	t.Cleanup(func() { _ = localPS.Close() })
 
-	localSrv := server.New(func(traceID string) {
+	localSrv := server.New(func(traceID []byte) {
 		_, _ = localPS.Publish(t.Context(), traceID)
 	}, nil, nil, nil, nil)
-	// Subscribe must be registered before any decisions can arrive from upstream.
+	// Subscribe before waiting for connection — handler is registered synchronously inside
+	// Subscribe before it blocks, so by the time the gRPC stream is established the handler
+	// is guaranteed to be in place.
+	// Handler is registered synchronously inside Subscribe before it blocks,
+	// so it is in place before localSrv starts and any collector can connect.
 	go func() {
-		_ = localPS.Subscribe(t.Context(), func(id string) { localSrv.Broadcast(id) })
+		_ = localPS.Subscribe(t.Context(), func(id []byte) { localSrv.Broadcast(id) })
 	}()
-	time.Sleep(200 * time.Millisecond) // let upstream connection establish and handler register
 	localAddr := startGRPCServer(t, localSrv)
 
 	// Collector client: connects to local coordinator.
@@ -52,8 +55,7 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 	stream, err := gen.NewCoordinatorClient(conn).Connect(ctx)
 	require.NoError(t, err)
 
-	const traceHex = "aabbccdd11223344aabbccdd11223344"
-	traceBytes, _ := hex.DecodeString(traceHex)
+	traceBytes, _ := hex.DecodeString("aabbccdd11223344aabbccdd11223344")
 
 	// Send NotifyInteresting from collector to local coordinator.
 	err = stream.Send(&gen.ProcessorMessage{

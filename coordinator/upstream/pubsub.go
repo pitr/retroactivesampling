@@ -2,7 +2,7 @@ package upstream
 
 import (
 	"context"
-	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -21,9 +21,9 @@ const (
 
 type PubSub struct {
 	conn     *grpc.ClientConn
-	sendCh   chan string
+	sendCh   chan []byte
 	mu       sync.RWMutex
-	handlers []func(string)
+	handlers []func([]byte)
 	ctx      context.Context
 	cancel   context.CancelFunc
 	done     chan struct{}
@@ -38,7 +38,7 @@ func New(endpoint string) *PubSub {
 	}
 	p := &PubSub{
 		conn:   conn,
-		sendCh: make(chan string, sendBufSize),
+		sendCh: make(chan []byte, sendBufSize),
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
@@ -48,17 +48,17 @@ func New(endpoint string) *PubSub {
 }
 
 // Always returns (false, nil) — no local dedup; novel count is tracked by the upstream coordinator.
-func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
+func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
 	select {
 	case p.sendCh <- traceID:
 	default:
-		slog.Warn("upstream: send buffer full, dropping notify", "trace_id", traceID)
+		slog.Warn("upstream: send buffer full, dropping notify", "trace_id", fmt.Sprintf("%x", traceID))
 	}
 	return false, nil
 }
 
 // Call before meaningful upstream decisions are expected to avoid a startup race.
-func (p *PubSub) Subscribe(ctx context.Context, handler func(string)) error {
+func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
 	p.mu.Lock()
 	p.handlers = append(p.handlers, handler)
 	p.mu.Unlock()
@@ -118,10 +118,9 @@ func (p *PubSub) recv(stream gen.Coordinator_ConnectClient, errCh chan<- error) 
 			p.mu.RLock()
 			hs := p.handlers
 			p.mu.RUnlock()
-			for _, raw := range b.TraceIds {
-				tid := hex.EncodeToString(raw)
+			for _, traceId := range b.TraceIds {
 				for _, h := range hs {
-					h(tid)
+					h(traceId)
 				}
 			}
 		}
@@ -132,10 +131,9 @@ func (p *PubSub) send(stream gen.Coordinator_ConnectClient, recvErr <-chan error
 	for {
 		select {
 		case traceID := <-p.sendCh:
-			tid, _ := hex.DecodeString(traceID)
 			if err := stream.Send(&gen.ProcessorMessage{
 				Payload: &gen.ProcessorMessage_Notify{
-					Notify: &gen.NotifyInteresting{TraceId: tid},
+					Notify: &gen.NotifyInteresting{TraceId: traceID},
 				},
 			}); err != nil {
 				return err

@@ -118,19 +118,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	srv := server.New(func(traceID string) {
+	srv := server.New(func(traceID []byte) {
 		if ctx.Err() != nil {
 			return
 		}
 		if novel, err := ps.Publish(ctx, traceID); err != nil {
-			slog.Error("publish", "trace_id", traceID, "err", err)
+			slog.Error("publish", "trace_id", fmt.Sprintf("%x", traceID), "err", err)
 		} else if novel {
 			interestingTraces.Add(1)
 		}
 	}, bytesIn, bytesOut, droppedSends, sendErrors)
 
 	go func() {
-		if err := ps.Subscribe(ctx, func(traceID string) {
+		if err := ps.Subscribe(ctx, func(traceID []byte) {
 			srv.Broadcast(traceID)
 		}); err != nil {
 			slog.Error("subscribe", "err", err)

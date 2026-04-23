@@ -11,7 +11,7 @@ import (
 type PubSub struct {
 	cache    *gocache.Cache
 	mu       sync.RWMutex
-	handlers []func(string)
+	handlers []func([]byte)
 }
 
 func New(ttl time.Duration) *PubSub {
@@ -20,8 +20,8 @@ func New(ttl time.Duration) *PubSub {
 	}
 }
 
-func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
-	if p.cache.Add(traceID, struct{}{}, gocache.DefaultExpiration) != nil {
+func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
+	if p.cache.Add(string(traceID), struct{}{}, gocache.DefaultExpiration) != nil {
 		return false, nil
 	}
 	p.mu.RLock()
@@ -33,7 +33,7 @@ func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
 	return true, nil
 }
 
-func (p *PubSub) Subscribe(ctx context.Context, handler func(string)) error {
+func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
 	p.mu.Lock()
 	p.handlers = append(p.handlers, handler)
 	p.mu.Unlock()

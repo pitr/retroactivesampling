@@ -29,8 +29,8 @@ func startServer(t *testing.T, s *server.Server) string {
 }
 
 func TestBroadcastToConnectedProcessors(t *testing.T) {
-	notified := make(chan string, 1)
-	srv := server.New(func(traceID string) { notified <- traceID }, nil, nil, nil, nil)
+	notified := make(chan []byte, 1)
+	srv := server.New(func(traceID []byte) { notified <- traceID }, nil, nil, nil, nil)
 	addr := startServer(t, srv)
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -40,8 +40,7 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 	stream, err := gen.NewCoordinatorClient(conn).Connect(context.Background())
 	require.NoError(t, err)
 
-	const traceHex = "aabbccdd11111111aabbccdd11111111"
-	traceBytes, _ := hex.DecodeString(traceHex)
+	traceBytes, _ := hex.DecodeString("aabbccdd11111111aabbccdd11111111")
 
 	// Processor sends notification
 	err = stream.Send(&gen.ProcessorMessage{
@@ -53,13 +52,13 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 
 	select {
 	case id := <-notified:
-		assert.Equal(t, traceHex, id)
+		assert.Equal(t, traceBytes, id)
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for notification")
 	}
 
 	// notified channel receipt proves the stream is registered — Broadcast will reach it.
-	srv.Broadcast(traceHex)
+	srv.Broadcast(traceBytes)
 
 	msg, err := stream.Recv()
 	require.NoError(t, err)
@@ -70,8 +69,8 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 }
 
 func TestBroadcastBatching(t *testing.T) {
-	notified := make(chan string, 1)
-	srv := server.New(func(id string) { notified <- id }, nil, nil, nil, nil)
+	notified := make(chan []byte, 1)
+	srv := server.New(func(id []byte) { notified <- id }, nil, nil, nil, nil)
 	addr := startServer(t, srv)
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -99,24 +98,22 @@ func TestBroadcastBatching(t *testing.T) {
 	}
 
 	const N = 50
-	sent := make([]string, N)
+	sent := make([][]byte, N)
 	for i := range sent {
 		b := make([]byte, 16)
 		_, _ = rand.Read(b)
-		sent[i] = hex.EncodeToString(b)
-		srv.Broadcast(sent[i])
+		sent[i] = b
+		srv.Broadcast(b)
 	}
 
-	var received []string
+	var received [][]byte
 	var batchCount int
 	for len(received) < N {
 		msg, err := stream.Recv()
 		require.NoError(t, err)
 		b := msg.GetBatch()
 		require.NotNil(t, b)
-		for _, raw := range b.TraceIds {
-			received = append(received, hex.EncodeToString(raw))
-		}
+		received = append(received, b.TraceIds...)
 		batchCount++
 	}
 

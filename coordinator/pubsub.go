@@ -9,8 +9,8 @@ import (
 )
 
 type PubSub interface {
-	Publish(ctx context.Context, traceID string) (bool, error)
-	Subscribe(ctx context.Context, handler func(string)) error
+	Publish(ctx context.Context, traceID []byte) (bool, error)
+	Subscribe(ctx context.Context, handler func([]byte)) error
 	Close() error
 }
 

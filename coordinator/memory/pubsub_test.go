@@ -15,7 +15,7 @@ import (
 
 func TestPublishNovel(t *testing.T) {
 	ps := memory.New(time.Minute)
-	novel, err := ps.Publish(t.Context(), "trace1")
+	novel, err := ps.Publish(t.Context(), []byte("trace1"))
 	require.NoError(t, err)
 	assert.True(t, novel)
 }
@@ -23,8 +23,8 @@ func TestPublishNovel(t *testing.T) {
 func TestPublishDuplicate(t *testing.T) {
 	ps := memory.New(time.Minute)
 	ctx := t.Context()
-	_, _ = ps.Publish(ctx, "trace1")
-	novel, err := ps.Publish(ctx, "trace1")
+	_, _ = ps.Publish(ctx, []byte("trace1"))
+	novel, err := ps.Publish(ctx, []byte("trace1"))
 	require.NoError(t, err)
 	assert.False(t, novel)
 }
@@ -32,16 +32,16 @@ func TestPublishDuplicate(t *testing.T) {
 func TestPublishCallsSubscriber(t *testing.T) {
 	ps := memory.New(time.Minute)
 
-	received := make(chan string, 1)
-	go func() { _ = ps.Subscribe(t.Context(), func(id string) { received <- id }) }()
+	received := make(chan []byte, 1)
+	go func() { _ = ps.Subscribe(t.Context(), func(id []byte) { received <- id }) }()
 	time.Sleep(50 * time.Millisecond) // let Subscribe register handler
 
-	_, err := ps.Publish(t.Context(), "trace2")
+	_, err := ps.Publish(t.Context(), []byte("trace2"))
 	require.NoError(t, err)
 
 	select {
 	case id := <-received:
-		assert.Equal(t, "trace2", id)
+		assert.Equal(t, []byte("trace2"), id)
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for subscriber")
 	}
@@ -51,12 +51,12 @@ func TestPublishDuplicateDoesNotCallSubscriber(t *testing.T) {
 	ps := memory.New(time.Minute)
 
 	var called atomic.Int32
-	go func() { _ = ps.Subscribe(t.Context(), func(string) { called.Add(1) }) }()
+	go func() { _ = ps.Subscribe(t.Context(), func([]byte) { called.Add(1) }) }()
 	time.Sleep(50 * time.Millisecond)
 
 	ctx := t.Context()
-	_, _ = ps.Publish(ctx, "trace3")
-	_, _ = ps.Publish(ctx, "trace3")
+	_, _ = ps.Publish(ctx, []byte("trace3"))
+	_, _ = ps.Publish(ctx, []byte("trace3"))
 
 	time.Sleep(50 * time.Millisecond) // give any spurious second call time to arrive
 	assert.Equal(t, int32(1), called.Load())
@@ -68,7 +68,7 @@ func TestSubscribeBlocksUntilContextCancelled(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_ = ps.Subscribe(ctx, func(string) {})
+		_ = ps.Subscribe(ctx, func([]byte) {})
 		close(done)
 	}()
 
@@ -84,30 +84,30 @@ func TestTTLExpiry(t *testing.T) {
 	ps := memory.New(100 * time.Millisecond)
 	ctx := t.Context()
 
-	novel, _ := ps.Publish(ctx, "traceX")
+	novel, _ := ps.Publish(ctx, []byte("traceX"))
 	assert.True(t, novel)
 
 	time.Sleep(200 * time.Millisecond) // wait for TTL to expire
 
-	novel, _ = ps.Publish(ctx, "traceX")
+	novel, _ = ps.Publish(ctx, []byte("traceX"))
 	assert.True(t, novel, "should be novel again after TTL expiry")
 }
 
 func TestPublishCallsAllSubscribers(t *testing.T) {
 	ps := memory.New(time.Minute)
 
-	r1, r2 := make(chan string, 1), make(chan string, 1)
-	go func() { _ = ps.Subscribe(t.Context(), func(id string) { r1 <- id }) }()
-	go func() { _ = ps.Subscribe(t.Context(), func(id string) { r2 <- id }) }()
+	r1, r2 := make(chan []byte, 1), make(chan []byte, 1)
+	go func() { _ = ps.Subscribe(t.Context(), func(id []byte) { r1 <- id }) }()
+	go func() { _ = ps.Subscribe(t.Context(), func(id []byte) { r2 <- id }) }()
 	time.Sleep(50 * time.Millisecond)
 
-	_, err := ps.Publish(t.Context(), "trace4")
+	_, err := ps.Publish(t.Context(), []byte("trace4"))
 	require.NoError(t, err)
 
-	for _, ch := range []chan string{r1, r2} {
+	for _, ch := range []chan []byte{r1, r2} {
 		select {
 		case id := <-ch:
-			assert.Equal(t, "trace4", id)
+			assert.Equal(t, []byte("trace4"), id)
 		case <-time.After(time.Second):
 			t.Fatal("timeout waiting for subscriber")
 		}
@@ -124,7 +124,7 @@ func TestConcurrentPublish(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			novel, _ := ps.Publish(ctx, "sametrace")
+			novel, _ := ps.Publish(ctx, []byte("sametrace"))
 			results[i] = novel
 		}(i)
 	}

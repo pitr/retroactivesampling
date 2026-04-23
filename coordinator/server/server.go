@@ -23,14 +23,14 @@ type Server struct {
 	gen.UnimplementedCoordinatorServer
 	mu           sync.Mutex
 	streams      map[string]*streamEntry
-	onNotify     func(traceID string)
+	onNotify     func(traceID []byte)
 	bytesIn      Counter
 	bytesOut     Counter
 	droppedSends Counter
 	sendErrors   Counter
 }
 
-func New(onNotify func(traceID string), bytesIn, bytesOut, droppedSends, sendErrors Counter) *Server {
+func New(onNotify func(traceID []byte), bytesIn, bytesOut, droppedSends, sendErrors Counter) *Server {
 	return &Server{
 		streams:      make(map[string]*streamEntry),
 		onNotify:     onNotify,
@@ -105,19 +105,18 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 			s.bytesIn.Add(float64(proto.Size(msg)))
 		}
 		if n := msg.GetNotify(); n != nil {
-			s.onNotify(hex.EncodeToString(n.TraceId))
+			s.onNotify(n.TraceId)
 		}
 	}
 }
 
 // Broadcast sends a keep decision to all connected processors. Best-effort: slow or
 // backpressured streams are skipped (their channel is full).
-func (s *Server) Broadcast(traceID string) {
-	tid, _ := hex.DecodeString(traceID)
+func (s *Server) Broadcast(traceID []byte) {
 	s.mu.Lock()
 	for _, entry := range s.streams {
 		select {
-		case entry.ch <- tid:
+		case entry.ch <- traceID:
 		default:
 			if s.droppedSends != nil {
 				s.droppedSends.Add(1)

@@ -11,7 +11,7 @@ import (
 
 const (
 	channel       = "retrosampling:interesting"
-	decidedKeyFmt = "retrosampling:decided:%s"
+	decidedKeyFmt = "retrosampling:decided:%x"
 )
 
 type PubSub struct {
@@ -40,7 +40,7 @@ func New(writeCfg Config, readCfg *Config, ttl time.Duration) (*PubSub, error) {
 // Note: SET NX and PUBLISH are not atomic. A coordinator crash between the two operations
 // causes silent trace loss — the NX key blocks retries but no broadcast is sent.
 // For this system's best-effort semantics this is acceptable.
-func (p *PubSub) Publish(ctx context.Context, traceID string) (bool, error) {
+func (p *PubSub) Publish(ctx context.Context, traceID []byte) (bool, error) {
 	key := fmt.Sprintf(decidedKeyFmt, traceID)
 	result, err := p.writeClient.SetArgs(ctx, key, 1, redis.SetArgs{TTL: p.ttl, Mode: "NX"}).Result()
 	if errors.Is(err, redis.Nil) {
@@ -56,14 +56,14 @@ func (p *PubSub) Publish(ctx context.Context, traceID string) (bool, error) {
 }
 
 // Subscribe calls handler for each traceID received. Blocks until ctx is cancelled.
-func (p *PubSub) Subscribe(ctx context.Context, handler func(traceID string)) error {
+func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
 	sub := p.readClient.Subscribe(ctx, channel)
 	defer func() { _ = sub.Close() }()
 	for {
 		select {
 		case msg := <-sub.Channel():
 			if msg != nil {
-				handler(msg.Payload)
+				handler([]byte(msg.Payload))
 			}
 		case <-ctx.Done():
 			return nil
