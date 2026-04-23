@@ -1,10 +1,21 @@
 # coordinator
 
-Standalone service that receives interesting-trace notifications from processors, deduplicates with Redis, and broadcasts keep decisions to all connected processors.
+Standalone service that receives interesting-trace notifications from processors, deduplicates them, and broadcasts keep decisions to all connected processors.
+
+## Modes
+
+### Single-node
+
+Runs without external dependencies. Deduplication is in-memory; state is lost on restart. Suitable for development and small single-instance deployments.
+
+### Distributed
+
+Uses Redis for deduplication and cross-instance fan-out. Multiple coordinator instances can run behind a load balancer — each subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
 
 ## Prerequisites
 
-- Redis
+- **single-node:** none
+- **distributed:** Redis
 
 ## Build
 
@@ -15,26 +26,43 @@ make build
 
 ## Configuration
 
+### Single-node
+
 ```yaml
 grpc_listen: :9090
 decided_key_ttl: 60s      # must exceed your trace window
 metrics_listen: :9091     # optional
 shutdown_timeout: 10s     # optional, default 10s
 
-redis_primary:
-  endpoint: redis:6379
-  username: user           # optional
-  password: secret         # optional
-  tls:
-    enabled: true
-    ca_file: /etc/ssl/ca.crt
-    cert_file: /etc/ssl/client.crt
-    key_file: /etc/ssl/client.key
-
-redis_replicas:            # optional; each coordinator picks one at random for SUBSCRIBE
-  - endpoint: replica1:6379
-  - endpoint: replica2:6379
+mode:
+  single: {}
 ```
+
+### Distributed
+
+```yaml
+grpc_listen: :9090
+decided_key_ttl: 60s      # must exceed your trace window
+metrics_listen: :9091     # optional
+shutdown_timeout: 10s     # optional, default 10s
+
+mode:
+  distributed:
+    redis_primary:
+      endpoint: redis:6379
+      username: user           # optional
+      password: secret         # optional
+      tls:
+        enabled: true
+        ca_file: /etc/ssl/ca.crt
+        cert_file: /etc/ssl/client.crt
+        key_file: /etc/ssl/client.key
+    redis_replicas:            # optional; each coordinator picks one at random for SUBSCRIBE
+      - endpoint: replica1:6379
+      - endpoint: replica2:6379
+```
+
+### Common fields
 
 | Key | Required | Description |
 |---|---|---|
@@ -42,6 +70,12 @@ redis_replicas:            # optional; each coordinator picks one at random for 
 | `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
+| `mode` | yes | Exactly one of `single` or `distributed` must be set |
+
+### `mode.distributed` fields
+
+| Key | Required | Description |
+|---|---|---|
 | `redis_primary` | yes | Redis primary connection (used for SET NX + PUBLISH) |
 | `redis_replicas` | no | Redis replica connections. Each coordinator picks one at random for SUBSCRIBE, distributing Redis outbound fan-out across replicas. Falls back to primary if not set. |
 
@@ -84,4 +118,4 @@ Outbound broadcast to processors is the dominant cost and scales with `I × coll
 
 ## High Availability
 
-Run multiple instances behind any load balancer (round-robin). Each instance subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
+Applies to **distributed mode** only. Run multiple instances behind any load balancer (round-robin). Each instance subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
