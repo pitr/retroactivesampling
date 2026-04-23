@@ -12,10 +12,22 @@ Runs without external dependencies. Deduplication is in-memory; state is lost on
 
 Uses Redis for cross-instance deduplication and fan-out. Multiple coordinator instances can run behind a load balancer — each subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
 
+### Upstream
+
+Forwards all notifications to a parent coordinator and relays broadcast decisions back to its own connected processors. No local deduplication — the upstream coordinator handles that.
+
+Use this mode to build a daisy-chain topology: collectors in a cluster connect to a local coordinator, which connects upstream to a central coordinator. The chain can be arbitrarily deep; each level uses the same gRPC protocol. This reduces expensive cross-cluster broadcast traffic from `I × P × M` (flat) to `I × K × M` (daisy-chain), where K is the number of clusters. See [PERFORMANCE.md](../PERFORMANCE.md) for the full analysis.
+
+```
+collectors → local coordinator → central coordinator → Redis
+collectors ←─────────────────────────────────────────┘
+```
+
 ## Prerequisites
 
 - **single-node:** none
 - **distributed:** Redis
+- **upstream:** a running coordinator to connect to (any mode)
 
 ## Build
 
@@ -62,6 +74,19 @@ mode:
       - endpoint: replica2:6379
 ```
 
+### Upstream
+
+```yaml
+grpc_listen: :9090
+decided_key_ttl: 60s      # must exceed your trace window
+metrics_listen: :9091     # optional
+shutdown_timeout: 10s     # optional, default 10s
+
+mode:
+  upstream:
+    endpoint: central-coordinator:9090
+```
+
 ### Common fields
 
 | Key | Required | Description |
@@ -70,7 +95,7 @@ mode:
 | `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
-| `mode` | yes | Exactly one of `single` or `distributed` must be set |
+| `mode` | yes | Exactly one of `single`, `distributed`, or `upstream` must be set |
 
 ### `mode.distributed` fields
 
@@ -99,6 +124,12 @@ mode:
 | `tls.cert_file` | Path to client certificate PEM |
 | `tls.key_file` | Path to client key PEM |
 
+### `mode.upstream` fields
+
+| Key | Required | Description |
+|---|---|---|
+| `endpoint` | yes | `host:port` of the upstream coordinator to connect to |
+
 ## Run
 
 ```bash
@@ -114,8 +145,10 @@ fleet inbound:        I × message_size   (~200 KB/s at I=10k, 20 B/message)
 per coordinator:      I × message_size / coordinator_count
 ```
 
-Outbound broadcast to processors is the dominant cost and scales with `I × collector_count`. See [PERFORMANCE.md](../PERFORMANCE.md) for full traffic formulas, scaling risks, and worked examples.
+Outbound broadcast to processors is the dominant cost and scales with `I × collector_count`. See [PERFORMANCE.md](../PERFORMANCE.md) for full traffic formulas, scaling risks, and worked examples including the daisy-chain topology.
 
 ## High Availability
 
-Applies to **distributed mode** only. Run multiple instances behind any load balancer (round-robin). Each instance subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
+**Distributed mode:** run multiple instances behind any load balancer (round-robin). Each instance subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
+
+**Upstream mode:** run multiple local coordinator instances per cluster, all pointing at the same upstream endpoint. Each instance independently maintains its upstream connection and broadcasts to its own connected processors. The upstream coordinator deduplicates across all of them.
