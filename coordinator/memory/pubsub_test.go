@@ -82,7 +82,7 @@ func TestSubscribeBlocksUntilContextCancelled(t *testing.T) {
 
 func TestTTLExpiry(t *testing.T) {
 	ps := memory.New(100 * time.Millisecond)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	novel, _ := ps.Publish(ctx, "traceX")
 	assert.True(t, novel)
@@ -91,6 +91,27 @@ func TestTTLExpiry(t *testing.T) {
 
 	novel, _ = ps.Publish(ctx, "traceX")
 	assert.True(t, novel, "should be novel again after TTL expiry")
+}
+
+func TestPublishCallsAllSubscribers(t *testing.T) {
+	ps := memory.New(time.Minute)
+
+	r1, r2 := make(chan string, 1), make(chan string, 1)
+	go func() { _ = ps.Subscribe(t.Context(), func(id string) { r1 <- id }) }()
+	go func() { _ = ps.Subscribe(t.Context(), func(id string) { r2 <- id }) }()
+	time.Sleep(50 * time.Millisecond)
+
+	_, err := ps.Publish(t.Context(), "trace4")
+	require.NoError(t, err)
+
+	for _, ch := range []chan string{r1, r2} {
+		select {
+		case id := <-ch:
+			assert.Equal(t, "trace4", id)
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for subscriber")
+		}
+	}
 }
 
 func TestConcurrentPublish(t *testing.T) {

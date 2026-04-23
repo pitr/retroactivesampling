@@ -41,4 +41,5 @@ func (p *PubSub) Subscribe(ctx context.Context, handler func(string)) error {
 	return nil
 }
 
+// Close is a no-op. The ctx passed to Subscribe must be cancelled to unblock those goroutines.
 func (p *PubSub) Close() error { return nil }
