@@ -19,6 +19,7 @@ import (
 	"pitr.ca/retroactivesampling/coordinator/memory"
 	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
+	"pitr.ca/retroactivesampling/coordinator/upstream"
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
@@ -95,6 +96,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("redis: %v", err)
 		}
+	case *UpstreamConfig:
+		if m.Endpoint == "" {
+			log.Fatal("upstream mode: endpoint is required")
+		}
+		log.Printf("running in upstream mode, connecting to %s", m.Endpoint)
+		ps = upstream.New(m.Endpoint)
 	default:
 		log.Fatalf("unknown mode type %T", activeMode)
 	}

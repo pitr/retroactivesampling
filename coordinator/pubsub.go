@@ -5,6 +5,7 @@ import (
 
 	"pitr.ca/retroactivesampling/coordinator/memory"
 	"pitr.ca/retroactivesampling/coordinator/redis"
+	"pitr.ca/retroactivesampling/coordinator/upstream"
 )
 
 type PubSub interface {
@@ -16,4 +17,5 @@ type PubSub interface {
 var (
 	_ PubSub = (*redis.PubSub)(nil)
 	_ PubSub = (*memory.PubSub)(nil)
+	_ PubSub = (*upstream.PubSub)(nil)
 )
