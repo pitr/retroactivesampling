@@ -1,8 +1,8 @@
 grpc_listen: :9090
-decided_key_ttl: 60s
 metrics_listen: :9091
 
 mode:
   distributed:
+    decided_key_ttl: 60s
     redis_primary:
       endpoint: localhost:6379

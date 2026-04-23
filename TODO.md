@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] `decided_key_ttl` in coordinator config should be in memory/redis config only, not global config. Update example/
 - [ ] coordinator should use a proper logging solution, not log.Printf
 - [ ] redis pubsub in coordinator has reduntant New/NewWithReplica, should just be 1 method
 - [ ] document coordinator metrics in its README (keep it short, one line per metric)

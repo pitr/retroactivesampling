@@ -40,12 +40,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("config mode: %v", err)
 	}
-	if _, ok := activeMode.(*UpstreamConfig); !ok {
-		if cfg.DecidedKeyTTL == 0 {
-			log.Fatal("decided_key_ttl is required")
-		}
-	}
-
 	bytesIn := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "coordinator_grpc_bytes_received_total",
 		Help: "Total bytes received from processors via gRPC.",
@@ -82,18 +76,24 @@ func main() {
 	var ps PubSub
 	switch m := activeMode.(type) {
 	case *SingleConfig:
+		if m.DecidedKeyTTL == 0 {
+			log.Fatal("single mode: decided_key_ttl is required")
+		}
 		log.Printf("running in single-node mode")
-		ps = memory.New(cfg.DecidedKeyTTL)
+		ps = memory.New(m.DecidedKeyTTL)
 	case *DistributedConfig:
+		if m.DecidedKeyTTL == 0 {
+			log.Fatal("distributed mode: decided_key_ttl is required")
+		}
 		if m.RedisPrimary.Endpoint == "" {
 			log.Fatal("distributed mode: redis_primary.endpoint is required")
 		}
 		if len(m.RedisReplicas) > 0 {
 			replicaCfg := m.RedisReplicas[rand.Intn(len(m.RedisReplicas))]
 			log.Printf("subscribing to Redis replica %s", replicaCfg.Endpoint)
-			ps, err = redis.NewWithReplica(m.RedisPrimary, replicaCfg, cfg.DecidedKeyTTL)
+			ps, err = redis.NewWithReplica(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL)
 		} else {
-			ps, err = redis.New(m.RedisPrimary, cfg.DecidedKeyTTL)
+			ps, err = redis.New(m.RedisPrimary, m.DecidedKeyTTL)
 		}
 		if err != nil {
 			log.Fatalf("redis: %v", err)

@@ -12,7 +12,6 @@ import (
 
 type Config struct {
 	GRPCListen      string        `yaml:"grpc_listen"`
-	DecidedKeyTTL   time.Duration `yaml:"decided_key_ttl"`
 	MetricsListen   string        `yaml:"metrics_listen"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 	Mode            ModeConfig    `yaml:"mode"`
@@ -45,9 +44,12 @@ func (m ModeConfig) active() (any, error) {
 	return result, nil
 }
 
-type SingleConfig struct{}
+type SingleConfig struct {
+	DecidedKeyTTL time.Duration `yaml:"decided_key_ttl"`
+}
 
 type DistributedConfig struct {
+	DecidedKeyTTL time.Duration  `yaml:"decided_key_ttl"`
 	RedisPrimary  redis.Config   `yaml:"redis_primary"`
 	RedisReplicas []redis.Config `yaml:"redis_replicas"`
 }
