@@ -21,6 +21,7 @@ type Config struct {
 type ModeConfig struct {
 	Single      *SingleConfig      `yaml:"single"`
 	Distributed *DistributedConfig `yaml:"distributed"`
+	Upstream    *UpstreamConfig    `yaml:"upstream"`
 }
 
 func (m ModeConfig) active() (any, error) {
@@ -34,6 +35,10 @@ func (m ModeConfig) active() (any, error) {
 		n++
 		result = m.Distributed
 	}
+	if m.Upstream != nil {
+		n++
+		result = m.Upstream
+	}
 	if n != 1 {
 		return nil, fmt.Errorf("exactly one mode must be configured (got %d)", n)
 	}
@@ -45,6 +50,10 @@ type SingleConfig struct{}
 type DistributedConfig struct {
 	RedisPrimary  redis.Config   `yaml:"redis_primary"`
 	RedisReplicas []redis.Config `yaml:"redis_replicas"`
+}
+
+type UpstreamConfig struct {
+	Endpoint string `yaml:"endpoint"`
 }
 
 func loadConfig(path string) (*Config, error) {
