@@ -13,7 +13,7 @@
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph fleet["Collector Fleet (P)"]
         P["Processors"]
     end
@@ -140,7 +140,7 @@ All other parameters unchanged from the flat topology table above.
 ### Architecture
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph cluster1["Cluster 1 (P/K collectors)"]
         P1["Processors"]
     end
@@ -152,16 +152,11 @@ flowchart LR
     CC["Central Coordinator"]
     R[("Redis\npub/sub")]
 
-    P1 -->|NotifyInteresting| LC1
-    P2 -->|NotifyInteresting| LC2
-    LC1 -->|NotifyInteresting| CC
-    LC2 -->|NotifyInteresting| CC
-    CC -->|SET NX + PUBLISH| R
-    R -->|subscription| CC
-    CC -->|BatchTraceDecision| LC1
-    CC -->|BatchTraceDecision| LC2
-    LC1 -->|BatchTraceDecision| P1
-    LC2 -->|BatchTraceDecision| P2
+    P1 <--> LC1
+    P2 <--> LC2
+    LC1 <--> CC
+    LC2 <--> CC
+    CC <--> R
 ```
 
 ### Traffic formulas
