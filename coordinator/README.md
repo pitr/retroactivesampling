@@ -10,7 +10,7 @@ Runs without external dependencies. Deduplication is in-memory; state is lost on
 
 ### Distributed
 
-Uses Redis for deduplication and cross-instance fan-out. Multiple coordinator instances can run behind a load balancer — each subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
+Uses Redis for cross-instance deduplication and fan-out. Multiple coordinator instances can run behind a load balancer — each subscribes to the same Redis pub/sub channel and broadcasts to its own connected processors.
 
 ## Prerequisites
 
