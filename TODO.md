@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] coordinator should use a proper logging solution, not log.Printf
 - [ ] redis pubsub in coordinator has reduntant New/NewWithReplica, should just be 1 method
 - [ ] document coordinator metrics in its README (keep it short, one line per metric)
 - [ ] coordinator does a lot of conversion between string and bytes for traceIDs all over the place, simplify

@@ -3,7 +3,8 @@ package upstream
 import (
 	"context"
 	"encoding/hex"
-	"log"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -32,7 +33,8 @@ func New(endpoint string) *PubSub {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("upstream: new client %s: %v", endpoint, err)
+		slog.Error("upstream: new client", "endpoint", endpoint, "err", err)
+		os.Exit(1)
 	}
 	p := &PubSub{
 		conn:   conn,
@@ -50,7 +52,7 @@ func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
 	select {
 	case p.sendCh <- traceID:
 	default:
-		log.Printf("upstream: send buffer full, dropping notify for trace %s", traceID)
+		slog.Warn("upstream: send buffer full, dropping notify", "trace_id", traceID)
 	}
 	return false, nil
 }
@@ -80,7 +82,7 @@ func (p *PubSub) run() {
 		}
 		stream, err := gen.NewCoordinatorClient(p.conn).Connect(p.ctx)
 		if err != nil {
-			log.Printf("upstream: connect failed, retrying in %s: %v", backoff, err)
+			slog.Warn("upstream: connect failed, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
 				return
@@ -92,7 +94,7 @@ func (p *PubSub) run() {
 		recvErr := make(chan error, 1)
 		go p.recv(stream, recvErr)
 		if err := p.send(stream, recvErr); err != nil {
-			log.Printf("upstream: connection lost, retrying in %s: %v", backoff, err)
+			slog.Warn("upstream: connection lost, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
 				return

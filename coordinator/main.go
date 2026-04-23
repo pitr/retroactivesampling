@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
@@ -23,22 +24,27 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
+}
+
 func main() {
 	cfgPath := flag.String("config", "coordinator.yaml", "path to config file")
 	flag.Parse()
 
 	cfg, err := loadConfig(*cfgPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		fatal("load config", "err", err)
 	}
 
 	if cfg.GRPCListen == "" {
-		log.Fatal("grpc_listen is required")
+		fatal("grpc_listen is required")
 	}
 
 	activeMode, err := cfg.Mode.active()
 	if err != nil {
-		log.Fatalf("config mode: %v", err)
+		fatal("config mode", "err", err)
 	}
 	bytesIn := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "coordinator_grpc_bytes_received_total",
@@ -66,9 +72,9 @@ func main() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
 		go func() {
-			log.Printf("metrics listening on %s", cfg.MetricsListen)
+			slog.Info("metrics listening", "addr", cfg.MetricsListen)
 			if err := http.ListenAndServe(cfg.MetricsListen, mux); err != nil {
-				log.Printf("metrics server: %v", err)
+				slog.Error("metrics server", "err", err)
 			}
 		}()
 	}
@@ -77,35 +83,35 @@ func main() {
 	switch m := activeMode.(type) {
 	case *SingleConfig:
 		if m.DecidedKeyTTL == 0 {
-			log.Fatal("single mode: decided_key_ttl is required")
+			fatal("single mode: decided_key_ttl is required")
 		}
-		log.Printf("running in single-node mode")
+		slog.Info("running in single-node mode")
 		ps = memory.New(m.DecidedKeyTTL)
 	case *DistributedConfig:
 		if m.DecidedKeyTTL == 0 {
-			log.Fatal("distributed mode: decided_key_ttl is required")
+			fatal("distributed mode: decided_key_ttl is required")
 		}
 		if m.RedisPrimary.Endpoint == "" {
-			log.Fatal("distributed mode: redis_primary.endpoint is required")
+			fatal("distributed mode: redis_primary.endpoint is required")
 		}
 		if len(m.RedisReplicas) > 0 {
 			replicaCfg := m.RedisReplicas[rand.Intn(len(m.RedisReplicas))]
-			log.Printf("subscribing to Redis replica %s", replicaCfg.Endpoint)
+			slog.Info("subscribing to Redis replica", "addr", replicaCfg.Endpoint)
 			ps, err = redis.NewWithReplica(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL)
 		} else {
 			ps, err = redis.New(m.RedisPrimary, m.DecidedKeyTTL)
 		}
 		if err != nil {
-			log.Fatalf("redis: %v", err)
+			fatal("redis", "err", err)
 		}
 	case *UpstreamConfig:
 		if m.Endpoint == "" {
-			log.Fatal("upstream mode: endpoint is required")
+			fatal("upstream mode: endpoint is required")
 		}
-		log.Printf("running in upstream mode, connecting to %s", m.Endpoint)
+		slog.Info("running in upstream mode", "endpoint", m.Endpoint)
 		ps = upstream.New(m.Endpoint)
 	default:
-		log.Fatalf("unknown mode type %T", activeMode)
+		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -116,7 +122,7 @@ func main() {
 			return
 		}
 		if novel, err := ps.Publish(ctx, traceID); err != nil {
-			log.Printf("publish %s: %v", traceID, err)
+			slog.Error("publish", "trace_id", traceID, "err", err)
 		} else if novel {
 			interestingTraces.Add(1)
 		}
@@ -126,20 +132,20 @@ func main() {
 		if err := ps.Subscribe(ctx, func(traceID string) {
 			srv.Broadcast(traceID)
 		}); err != nil {
-			log.Printf("subscribe error: %v", err)
+			slog.Error("subscribe", "err", err)
 		}
 	}()
 
 	lis, err := net.Listen("tcp", cfg.GRPCListen)
 	if err != nil {
-		log.Fatalf("listen: %v", err)
+		fatal("listen", "err", err)
 	}
 	gs := grpc.NewServer()
 	gen.RegisterCoordinatorServer(gs, srv)
 
 	go func() {
 		<-ctx.Done()
-		log.Printf("shutting down")
+		slog.Info("shutting down")
 		timeout := cfg.ShutdownTimeout
 		if timeout == 0 {
 			timeout = 10 * time.Second
@@ -154,15 +160,15 @@ func main() {
 		select {
 		case <-done:
 		case <-stopCtx.Done():
-			log.Printf("graceful stop timed out, forcing")
+			slog.Warn("graceful stop timed out, forcing")
 			gs.Stop()
 		}
 		_ = ps.Close()
-		log.Printf("shutdown complete")
+		slog.Info("shutdown complete")
 	}()
 
-	log.Printf("coordinator listening on %s", cfg.GRPCListen)
+	slog.Info("coordinator listening", "addr", cfg.GRPCListen)
 	if err := gs.Serve(lis); err != nil {
-		log.Fatalf("serve: %v", err)
+		fatal("serve", "err", err)
 	}
 }
