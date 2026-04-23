@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] document coordinator metrics in its README (keep it short, one line per metric)
 - [ ] coordinator does a lot of conversion between string and bytes for traceIDs all over the place, simplify
 - [ ] with a batch-related change to coordinator.proto, does the 20 byte assumption in PERFORMANCE.md still make sense?
 

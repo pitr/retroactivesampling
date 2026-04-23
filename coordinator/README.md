@@ -42,24 +42,26 @@ make build
 
 ```yaml
 grpc_listen: :9090
-decided_key_ttl: 60s      # must exceed your trace window
+log_level: INFO           # optional, default INFO
 metrics_listen: :9091     # optional
 shutdown_timeout: 10s     # optional, default 10s
 
 mode:
-  single: {}
+  single:
+    decided_key_ttl: 60s  # must exceed your trace window
 ```
 
 ### Distributed
 
 ```yaml
 grpc_listen: :9090
-decided_key_ttl: 60s      # must exceed your trace window
+log_level: INFO           # optional, default INFO
 metrics_listen: :9091     # optional
 shutdown_timeout: 10s     # optional, default 10s
 
 mode:
   distributed:
+    decided_key_ttl: 60s  # must exceed your trace window
     redis_primary:
       endpoint: redis:6379
       username: user           # optional
@@ -78,7 +80,7 @@ mode:
 
 ```yaml
 grpc_listen: :9090
-decided_key_ttl: 60s      # must exceed your trace window
+log_level: INFO           # optional, default INFO
 metrics_listen: :9091     # optional
 shutdown_timeout: 10s     # optional, default 10s
 
@@ -92,15 +94,22 @@ mode:
 | Key | Required | Description |
 |---|---|---|
 | `grpc_listen` | yes | `host:port` to listen for processor gRPC connections |
-| `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
+| `log_level` | no | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default `INFO`) |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
 | `mode` | yes | Exactly one of `single`, `distributed`, or `upstream` must be set |
+
+### `mode.single` fields
+
+| Key | Required | Description |
+|---|---|---|
+| `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 
 ### `mode.distributed` fields
 
 | Key | Required | Description |
 |---|---|---|
+| `decided_key_ttl` | yes | How long to remember a trace decision; must exceed your longest expected trace window |
 | `redis_primary` | yes | Redis primary connection (used for SET NX + PUBLISH) |
 | `redis_replicas` | no | Redis replica connections. Each coordinator picks one at random for SUBSCRIBE, distributing Redis outbound fan-out across replicas. Falls back to primary if not set. |
 
@@ -129,6 +138,18 @@ mode:
 | Key | Required | Description |
 |---|---|---|
 | `endpoint` | yes | `host:port` of the upstream coordinator to connect to |
+
+## Metrics
+
+Exposed at `metrics_listen/metrics` when `metrics_listen` is set.
+
+| Metric | Type | Description |
+|---|---|---|
+| `coordinator_grpc_bytes_received_total` | counter | Bytes received from processors via gRPC |
+| `coordinator_grpc_bytes_sent_total` | counter | Bytes sent to processors via gRPC |
+| `coordinator_interesting_traces_total` | counter | Unique interesting traces seen by this coordinator |
+| `coordinator_broadcast_drops_total` | counter | Keep decisions dropped because a processor's send buffer was full |
+| `coordinator_broadcast_send_errors_total` | counter | Errors returned by `stream.Send` when broadcasting keep decisions |
 
 ## Run
 

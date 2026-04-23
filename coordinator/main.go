@@ -37,6 +37,7 @@ func main() {
 	if err != nil {
 		fatal("load config", "err", err)
 	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})))
 
 	if cfg.GRPCListen == "" {
 		fatal("grpc_listen is required")

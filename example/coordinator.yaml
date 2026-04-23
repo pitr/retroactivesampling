@@ -1,4 +1,5 @@
 grpc_listen: :9090
+log_level: INFO
 metrics_listen: :9091
 
 mode:

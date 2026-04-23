@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 type Config struct {
 	GRPCListen      string        `yaml:"grpc_listen"`
+	LogLevel        slog.Level    `yaml:"log_level"`
 	MetricsListen   string        `yaml:"metrics_listen"`
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
 	Mode            ModeConfig    `yaml:"mode"`
