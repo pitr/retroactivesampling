@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
+	"pitr.ca/retroactivesampling/coordinator/memory"
 	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
 	gen "pitr.ca/retroactivesampling/proto"
@@ -33,11 +34,13 @@ func main() {
 	if cfg.GRPCListen == "" {
 		log.Fatal("grpc_listen is required")
 	}
-	if cfg.RedisPrimary.Endpoint == "" {
-		log.Fatal("redis_primary.endpoint is required")
-	}
 	if cfg.DecidedKeyTTL == 0 {
 		log.Fatal("decided_key_ttl is required")
+	}
+
+	activeMode, err := cfg.Mode.active()
+	if err != nil {
+		log.Fatalf("config mode: %v", err)
 	}
 
 	bytesIn := prometheus.NewCounter(prometheus.CounterOpts{
@@ -73,16 +76,25 @@ func main() {
 		}()
 	}
 
-	var ps *redis.PubSub
-	if len(cfg.RedisReplicas) > 0 {
-		replicaCfg := cfg.RedisReplicas[rand.Intn(len(cfg.RedisReplicas))]
-		log.Printf("subscribing to Redis replica %s", replicaCfg.Endpoint)
-		ps, err = redis.NewWithReplica(cfg.RedisPrimary, replicaCfg, cfg.DecidedKeyTTL)
-	} else {
-		ps, err = redis.New(cfg.RedisPrimary, cfg.DecidedKeyTTL)
-	}
-	if err != nil {
-		log.Fatalf("redis: %v", err)
+	var ps PubSub
+	switch m := activeMode.(type) {
+	case *SingleConfig:
+		log.Printf("running in single-node mode")
+		ps = memory.New(cfg.DecidedKeyTTL)
+	case *DistributedConfig:
+		if m.RedisPrimary.Endpoint == "" {
+			log.Fatal("distributed mode: redis_primary.endpoint is required")
+		}
+		if len(m.RedisReplicas) > 0 {
+			replicaCfg := m.RedisReplicas[rand.Intn(len(m.RedisReplicas))]
+			log.Printf("subscribing to Redis replica %s", replicaCfg.Endpoint)
+			ps, err = redis.NewWithReplica(m.RedisPrimary, replicaCfg, cfg.DecidedKeyTTL)
+		} else {
+			ps, err = redis.New(m.RedisPrimary, cfg.DecidedKeyTTL)
+		}
+		if err != nil {
+			log.Fatalf("redis: %v", err)
+		}
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -99,15 +111,11 @@ func main() {
 		}
 	}, bytesIn, bytesOut, droppedSends, sendErrors)
 
-	// All coordinators (including this one) subscribe to the Redis channel.
-	// When this instance publishes a trace ID, it arrives back via Subscribe
-	// and is broadcast to all connected processors here — this ensures a single
-	// code path handles all decisions regardless of which instance originated them.
 	go func() {
 		if err := ps.Subscribe(ctx, func(traceID string) {
 			srv.Broadcast(traceID)
 		}); err != nil {
-			log.Printf("redis subscribe error: %v", err)
+			log.Printf("subscribe error: %v", err)
 		}
 	}()
 
