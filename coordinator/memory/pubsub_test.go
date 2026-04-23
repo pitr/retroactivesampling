@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,14 +15,14 @@ import (
 
 func TestPublishNovel(t *testing.T) {
 	ps := memory.New(time.Minute)
-	novel, err := ps.Publish(context.Background(), "trace1")
+	novel, err := ps.Publish(t.Context(), "trace1")
 	require.NoError(t, err)
 	assert.True(t, novel)
 }
 
 func TestPublishDuplicate(t *testing.T) {
 	ps := memory.New(time.Minute)
-	ctx := context.Background()
+	ctx := t.Context()
 	_, _ = ps.Publish(ctx, "trace1")
 	novel, err := ps.Publish(ctx, "trace1")
 	require.NoError(t, err)
@@ -30,14 +31,12 @@ func TestPublishDuplicate(t *testing.T) {
 
 func TestPublishCallsSubscriber(t *testing.T) {
 	ps := memory.New(time.Minute)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	received := make(chan string, 1)
-	go func() { _ = ps.Subscribe(ctx, func(id string) { received <- id }) }()
+	go func() { _ = ps.Subscribe(t.Context(), func(id string) { received <- id }) }()
 	time.Sleep(50 * time.Millisecond) // let Subscribe register handler
 
-	_, err := ps.Publish(context.Background(), "trace2")
+	_, err := ps.Publish(t.Context(), "trace2")
 	require.NoError(t, err)
 
 	select {
@@ -50,24 +49,22 @@ func TestPublishCallsSubscriber(t *testing.T) {
 
 func TestPublishDuplicateDoesNotCallSubscriber(t *testing.T) {
 	ps := memory.New(time.Minute)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	called := 0
-	go func() { _ = ps.Subscribe(ctx, func(string) { called++ }) }()
+	var called atomic.Int32
+	go func() { _ = ps.Subscribe(t.Context(), func(string) { called.Add(1) }) }()
 	time.Sleep(50 * time.Millisecond)
 
-	ctx2 := context.Background()
-	_, _ = ps.Publish(ctx2, "trace3")
-	_, _ = ps.Publish(ctx2, "trace3")
+	ctx := t.Context()
+	_, _ = ps.Publish(ctx, "trace3")
+	_, _ = ps.Publish(ctx, "trace3")
 
 	time.Sleep(50 * time.Millisecond) // give any spurious second call time to arrive
-	assert.Equal(t, 1, called)
+	assert.Equal(t, int32(1), called.Load())
 }
 
 func TestSubscribeBlocksUntilContextCancelled(t *testing.T) {
 	ps := memory.New(time.Minute)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	done := make(chan struct{})
 	go func() {
