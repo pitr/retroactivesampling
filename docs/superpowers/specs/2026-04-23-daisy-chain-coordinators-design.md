@@ -41,10 +41,9 @@ New third mode in `ModeConfig`:
 mode:
   upstream:
     endpoint: "central-coordinator:4317"
-    # tls, headers, etc. — standard gRPC client fields
 ```
 
-`UpstreamConfig` holds a gRPC endpoint (and optionally TLS/auth). Uses plain `google.golang.org/grpc` — no OTel `configgrpc` dependency, consistent with the rest of the coordinator binary.
+`UpstreamConfig` holds a single endpoint string. Uses plain `google.golang.org/grpc` — no OTel `configgrpc` dependency, consistent with the rest of the coordinator binary. TLS and auth are out of scope.
 
 ## Data Flow
 
