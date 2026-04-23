@@ -3,7 +3,6 @@ package upstream_test
 import (
 	"context"
 	"encoding/hex"
-	"net"
 	"testing"
 	"time"
 
@@ -18,17 +17,6 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-func startCoordServer(t *testing.T, srv *server.Server) string {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	gs := grpc.NewServer()
-	gen.RegisterCoordinatorServer(gs, srv)
-	go func() { _ = gs.Serve(lis) }()
-	t.Cleanup(gs.Stop)
-	return lis.Addr().String()
-}
-
 func TestIntegrationLocalToCentral(t *testing.T) {
 	// Central coordinator: single-node with memory PubSub.
 	memPS := memory.New(time.Minute)
@@ -38,7 +26,7 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 	go func() {
 		_ = memPS.Subscribe(t.Context(), func(id string) { centralSrv.Broadcast(id) })
 	}()
-	centralAddr := startCoordServer(t, centralSrv)
+	centralAddr := startGRPCServer(t, centralSrv)
 
 	// Local coordinator: upstream PubSub pointing at central.
 	localPS := upstream.New(centralAddr)
@@ -52,7 +40,7 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 		_ = localPS.Subscribe(t.Context(), func(id string) { localSrv.Broadcast(id) })
 	}()
 	time.Sleep(200 * time.Millisecond) // let upstream connection establish and handler register
-	localAddr := startCoordServer(t, localSrv)
+	localAddr := startGRPCServer(t, localSrv)
 
 	// Collector client: connects to local coordinator.
 	conn, err := grpc.NewClient(localAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))

@@ -65,7 +65,7 @@ func newMock() *mockServer {
 	}
 }
 
-func startMockServer(t *testing.T, srv *mockServer) string {
+func startGRPCServer(t *testing.T, srv gen.CoordinatorServer) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ const traceHex = "aabbccdd11223344aabbccdd11223344"
 
 func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
-	addr := startMockServer(t, mock)
+	addr := startGRPCServer(t, mock)
 
 	ps := upstream.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
@@ -99,7 +99,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 
 func TestPublishAlwaysReturnsTrue(t *testing.T) {
 	mock := newMock()
-	addr := startMockServer(t, mock)
+	addr := startGRPCServer(t, mock)
 
 	ps := upstream.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
@@ -113,7 +113,7 @@ func TestPublishAlwaysReturnsTrue(t *testing.T) {
 
 func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
 	mock := newMock()
-	addr := startMockServer(t, mock)
+	addr := startGRPCServer(t, mock)
 
 	ps := upstream.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })

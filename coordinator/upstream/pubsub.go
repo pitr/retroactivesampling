@@ -13,13 +13,10 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-var _ interface {
-	Publish(context.Context, string) (bool, error)
-	Subscribe(context.Context, func(string)) error
-	Close() error
-} = (*PubSub)(nil)
-
-const sendBufSize = 256
+const (
+	sendBufSize = 256
+	maxBackoff  = 30 * time.Second
+)
 
 type PubSub struct {
 	endpoint string
@@ -44,7 +41,7 @@ func New(endpoint string) *PubSub {
 	return p
 }
 
-// Publish enqueues traceID to be forwarded upstream. Always returns (true, nil) — no local dedup.
+// Always returns (true, nil) — dedup is delegated upstream.
 func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
 	select {
 	case p.sendCh <- traceID:
@@ -54,7 +51,6 @@ func (p *PubSub) Publish(_ context.Context, traceID string) (bool, error) {
 	return true, nil
 }
 
-// Subscribe registers handler and blocks until ctx is cancelled.
 // Call before meaningful upstream decisions are expected to avoid a startup race.
 func (p *PubSub) Subscribe(ctx context.Context, handler func(string)) error {
 	p.mu.Lock()
@@ -84,7 +80,7 @@ func (p *PubSub) run() {
 			case <-p.ctx.Done():
 				return
 			case <-time.After(backoff):
-				backoff = min(backoff*2, 30*time.Second)
+				backoff = min(backoff*2, maxBackoff)
 			}
 		} else {
 			backoff = time.Second
