@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"net"
 	"testing"
@@ -62,7 +63,63 @@ func TestBroadcastToConnectedProcessors(t *testing.T) {
 
 	msg, err := stream.Recv()
 	require.NoError(t, err)
-	d := msg.GetDecision()
-	require.NotNil(t, d)
-	assert.Equal(t, traceBytes, d.TraceId)
+	b := msg.GetBatch()
+	require.NotNil(t, b)
+	require.Len(t, b.TraceIds, 1)
+	assert.Equal(t, traceBytes, b.TraceIds[0])
+}
+
+func TestBroadcastBatching(t *testing.T) {
+	notified := make(chan string, 1)
+	srv := server.New(func(id string) { notified <- id }, nil, nil, nil, nil)
+	addr := startServer(t, srv)
+
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := gen.NewCoordinatorClient(conn).Connect(ctx)
+	require.NoError(t, err)
+
+	// Wait for stream to be registered before broadcasting.
+	marker := make([]byte, 16)
+	_, _ = rand.Read(marker)
+	err = stream.Send(&gen.ProcessorMessage{
+		Payload: &gen.ProcessorMessage_Notify{
+			Notify: &gen.NotifyInteresting{TraceId: marker},
+		},
+	})
+	require.NoError(t, err)
+	select {
+	case <-notified:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for stream registration")
+	}
+
+	const N = 50
+	sent := make([]string, N)
+	for i := range sent {
+		b := make([]byte, 16)
+		_, _ = rand.Read(b)
+		sent[i] = hex.EncodeToString(b)
+		srv.Broadcast(sent[i])
+	}
+
+	var received []string
+	var batchCount int
+	for len(received) < N {
+		msg, err := stream.Recv()
+		require.NoError(t, err)
+		b := msg.GetBatch()
+		require.NotNil(t, b)
+		for _, raw := range b.TraceIds {
+			received = append(received, hex.EncodeToString(raw))
+		}
+		batchCount++
+	}
+
+	assert.ElementsMatch(t, sent, received)
+	assert.Less(t, batchCount, N, "expected batching to reduce message count")
 }

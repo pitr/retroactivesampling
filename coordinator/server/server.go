@@ -11,10 +11,12 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
+const maxBatchSize = 256
+
 type Counter interface{ Add(float64) }
 
 type streamEntry struct {
-	ch chan *gen.CoordinatorMessage
+	ch chan []byte
 }
 
 type Server struct {
@@ -41,7 +43,7 @@ func New(onNotify func(traceID string), bytesIn, bytesOut, droppedSends, sendErr
 
 func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 	id := randomID()
-	entry := &streamEntry{ch: make(chan *gen.CoordinatorMessage, 256)}
+	entry := &streamEntry{ch: make(chan []byte, 256)}
 
 	s.mu.Lock()
 	s.streams[id] = entry
@@ -60,7 +62,22 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 	go func() {
 		for {
 			select {
-			case msg := <-entry.ch:
+			case tid := <-entry.ch:
+				ids := [][]byte{tid}
+			drain:
+				for len(ids) < maxBatchSize {
+					select {
+					case tid := <-entry.ch:
+						ids = append(ids, tid)
+					default:
+						break drain
+					}
+				}
+				msg := &gen.CoordinatorMessage{
+					Payload: &gen.CoordinatorMessage_Batch{
+						Batch: &gen.BatchTraceDecision{TraceIds: ids},
+					},
+				}
 				if s.bytesOut != nil {
 					s.bytesOut.Add(float64(proto.Size(msg)))
 				}
@@ -93,19 +110,14 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 	}
 }
 
-// Broadcast sends keep decision to all connected processors. Best-effort: slow or
+// Broadcast sends a keep decision to all connected processors. Best-effort: slow or
 // backpressured streams are skipped (their channel is full).
 func (s *Server) Broadcast(traceID string) {
 	tid, _ := hex.DecodeString(traceID)
-	msg := &gen.CoordinatorMessage{
-		Payload: &gen.CoordinatorMessage_Decision{
-			Decision: &gen.TraceDecision{TraceId: tid},
-		},
-	}
 	s.mu.Lock()
 	for _, entry := range s.streams {
 		select {
-		case entry.ch <- msg:
+		case entry.ch <- tid:
 		default:
 			if s.droppedSends != nil {
 				s.droppedSends.Add(1)

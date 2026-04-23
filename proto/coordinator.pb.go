@@ -91,7 +91,7 @@ type CoordinatorMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
 	//
-	//	*CoordinatorMessage_Decision
+	//	*CoordinatorMessage_Batch
 	Payload       isCoordinatorMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -134,10 +134,10 @@ func (x *CoordinatorMessage) GetPayload() isCoordinatorMessage_Payload {
 	return nil
 }
 
-func (x *CoordinatorMessage) GetDecision() *TraceDecision {
+func (x *CoordinatorMessage) GetBatch() *BatchTraceDecision {
 	if x != nil {
-		if x, ok := x.Payload.(*CoordinatorMessage_Decision); ok {
-			return x.Decision
+		if x, ok := x.Payload.(*CoordinatorMessage_Batch); ok {
+			return x.Batch
 		}
 	}
 	return nil
@@ -147,11 +147,11 @@ type isCoordinatorMessage_Payload interface {
 	isCoordinatorMessage_Payload()
 }
 
-type CoordinatorMessage_Decision struct {
-	Decision *TraceDecision `protobuf:"bytes,1,opt,name=decision,proto3,oneof"`
+type CoordinatorMessage_Batch struct {
+	Batch *BatchTraceDecision `protobuf:"bytes,1,opt,name=batch,proto3,oneof"`
 }
 
-func (*CoordinatorMessage_Decision) isCoordinatorMessage_Payload() {}
+func (*CoordinatorMessage_Batch) isCoordinatorMessage_Payload() {}
 
 type NotifyInteresting struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -197,27 +197,27 @@ func (x *NotifyInteresting) GetTraceId() []byte {
 	return nil
 }
 
-type TraceDecision struct {
+type BatchTraceDecision struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TraceId       []byte                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	TraceIds      [][]byte               `protobuf:"bytes,1,rep,name=trace_ids,json=traceIds,proto3" json:"trace_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TraceDecision) Reset() {
-	*x = TraceDecision{}
+func (x *BatchTraceDecision) Reset() {
+	*x = BatchTraceDecision{}
 	mi := &file_coordinator_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TraceDecision) String() string {
+func (x *BatchTraceDecision) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TraceDecision) ProtoMessage() {}
+func (*BatchTraceDecision) ProtoMessage() {}
 
-func (x *TraceDecision) ProtoReflect() protoreflect.Message {
+func (x *BatchTraceDecision) ProtoReflect() protoreflect.Message {
 	mi := &file_coordinator_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -229,14 +229,14 @@ func (x *TraceDecision) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TraceDecision.ProtoReflect.Descriptor instead.
-func (*TraceDecision) Descriptor() ([]byte, []int) {
+// Deprecated: Use BatchTraceDecision.ProtoReflect.Descriptor instead.
+func (*BatchTraceDecision) Descriptor() ([]byte, []int) {
 	return file_coordinator_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *TraceDecision) GetTraceId() []byte {
+func (x *BatchTraceDecision) GetTraceIds() [][]byte {
 	if x != nil {
-		return x.TraceId
+		return x.TraceIds
 	}
 	return nil
 }
@@ -248,14 +248,14 @@ const file_coordinator_proto_rawDesc = "" +
 	"\x11coordinator.proto\x12\vcoordinator\"W\n" +
 	"\x10ProcessorMessage\x128\n" +
 	"\x06notify\x18\x01 \x01(\v2\x1e.coordinator.NotifyInterestingH\x00R\x06notifyB\t\n" +
-	"\apayload\"Y\n" +
-	"\x12CoordinatorMessage\x128\n" +
-	"\bdecision\x18\x01 \x01(\v2\x1a.coordinator.TraceDecisionH\x00R\bdecisionB\t\n" +
+	"\apayload\"X\n" +
+	"\x12CoordinatorMessage\x127\n" +
+	"\x05batch\x18\x01 \x01(\v2\x1f.coordinator.BatchTraceDecisionH\x00R\x05batchB\t\n" +
 	"\apayload\".\n" +
 	"\x11NotifyInteresting\x12\x19\n" +
-	"\btrace_id\x18\x01 \x01(\fR\atraceId\"*\n" +
-	"\rTraceDecision\x12\x19\n" +
-	"\btrace_id\x18\x01 \x01(\fR\atraceId2\\\n" +
+	"\btrace_id\x18\x01 \x01(\fR\atraceId\"1\n" +
+	"\x12BatchTraceDecision\x12\x1b\n" +
+	"\ttrace_ids\x18\x01 \x03(\fR\btraceIds2\\\n" +
 	"\vCoordinator\x12M\n" +
 	"\aConnect\x12\x1d.coordinator.ProcessorMessage\x1a\x1f.coordinator.CoordinatorMessage(\x010\x01B#Z!pitr.ca/retroactivesampling/protob\x06proto3"
 
@@ -276,11 +276,11 @@ var file_coordinator_proto_goTypes = []any{
 	(*ProcessorMessage)(nil),   // 0: coordinator.ProcessorMessage
 	(*CoordinatorMessage)(nil), // 1: coordinator.CoordinatorMessage
 	(*NotifyInteresting)(nil),  // 2: coordinator.NotifyInteresting
-	(*TraceDecision)(nil),      // 3: coordinator.TraceDecision
+	(*BatchTraceDecision)(nil), // 3: coordinator.BatchTraceDecision
 }
 var file_coordinator_proto_depIdxs = []int32{
 	2, // 0: coordinator.ProcessorMessage.notify:type_name -> coordinator.NotifyInteresting
-	3, // 1: coordinator.CoordinatorMessage.decision:type_name -> coordinator.TraceDecision
+	3, // 1: coordinator.CoordinatorMessage.batch:type_name -> coordinator.BatchTraceDecision
 	0, // 2: coordinator.Coordinator.Connect:input_type -> coordinator.ProcessorMessage
 	1, // 3: coordinator.Coordinator.Connect:output_type -> coordinator.CoordinatorMessage
 	3, // [3:4] is the sub-list for method output_type
@@ -299,7 +299,7 @@ func file_coordinator_proto_init() {
 		(*ProcessorMessage_Notify)(nil),
 	}
 	file_coordinator_proto_msgTypes[1].OneofWrappers = []any{
-		(*CoordinatorMessage_Decision)(nil),
+		(*CoordinatorMessage_Batch)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
