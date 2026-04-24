@@ -1,6 +1,7 @@
 package buffer_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,19 +37,30 @@ func BenchmarkWrite(b *testing.B) {
 	}
 }
 
-// BenchmarkRead measures read throughput. The write is excluded from timing
-// via StopTimer/StartTimer so only ReadAndDelete is measured.
+// BenchmarkRead measures ReadAndDelete throughput. The buffer is pre-populated
+// with b.N entries before the timed loop starts so no writes occur during timing.
 func BenchmarkRead(b *testing.B) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-	buf := newBufSizeB(b, 1<<20) // 1 MB
+
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(tr)
+	require.NoError(b, err)
+	rs := int64(44 + len(data))
+
+	traceIDs := make([]string, b.N)
+	for i := range traceIDs {
+		traceIDs[i] = fmt.Sprintf("%032d", i)
+	}
+
+	buf := newBufSizeB(b, int64(b.N)*rs+rs)
 	now := time.Now()
+	for _, tid := range traceIDs {
+		require.NoError(b, buf.WriteWithEviction(tid, tr, now))
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		_ = buf.WriteWithEviction(traceA, tr, now)
-		b.StartTimer()
-		_, _, _ = buf.ReadAndDelete(traceA)
+	for _, tid := range traceIDs {
+		_, _, _ = buf.ReadAndDelete(tid)
 	}
 }
