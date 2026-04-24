@@ -35,6 +35,7 @@ type SpanBuffer struct {
 	wHead         int64
 	rHead         int64
 	used          int64
+	liveBytes     int64
 	lastMadvise   int64
 	entries       map[[16]byte][]deltaRecord
 	evictObserver func(time.Duration)
@@ -138,6 +139,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, spans ptrace.Traces, in
 	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(delta))})
 	b.wHead += recSize
 	b.used += recSize
+	b.liveBytes += recSize
 	return nil
 }
 
@@ -168,6 +170,7 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	if deltas, ok := b.entries[key]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
 		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 		b.evictObserver(now.Sub(insertedAt))
+		b.liveBytes -= recSize
 		b.entries[key] = deltas[1:]
 		if len(b.entries[key]) == 0 {
 			delete(b.entries, key)
@@ -220,7 +223,20 @@ func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) (ptrace.Traces, bool, error
 			return ptrace.Traces{}, false, err
 		}
 		t.ResourceSpans().MoveAndAppendTo(result.ResourceSpans())
+		b.liveBytes -= int64(hdrSize) + int64(d.size)
 	}
 	delete(b.entries, traceID)
 	return result, true, nil
+}
+
+func (b *SpanBuffer) LiveBytes() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.liveBytes
+}
+
+func (b *SpanBuffer) OrphanedBytes() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.used - b.liveBytes
 }

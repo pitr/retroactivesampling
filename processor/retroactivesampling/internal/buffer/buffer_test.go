@@ -210,3 +210,36 @@ func TestReadAndDeleteMultipleDeltas(t *testing.T) {
 	_, ok, _ = buf.ReadAndDelete(traceA)
 	assert.False(t, ok)
 }
+
+func TestLiveBytesAndOrphanedBytes(t *testing.T) {
+	buf := newBuf(t)
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+
+	assert.Equal(t, int64(0), buf.LiveBytes())
+	assert.Equal(t, int64(0), buf.OrphanedBytes())
+
+	require.NoError(t, buf.WriteWithEviction(traceA, tr, time.Now()))
+	assert.Equal(t, rs, buf.LiveBytes())
+	assert.Equal(t, int64(0), buf.OrphanedBytes())
+
+	_, ok, err := buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, int64(0), buf.LiveBytes())
+	assert.Equal(t, rs, buf.OrphanedBytes())
+}
+
+func TestLiveBytesDecrementedOnEviction(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	buf := newBufSize(t, rs)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+
+	// traceA was evicted by sweepOneLocked; liveBytes must drop, orphaned must be zero.
+	assert.Equal(t, rs, buf.LiveBytes(), "only traceB remains live")
+	assert.Equal(t, int64(0), buf.OrphanedBytes())
+}
