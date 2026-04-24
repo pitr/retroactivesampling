@@ -14,7 +14,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-const hdrSize = 28 // traceID(16) + insertedAt(8) + dataLen(4)
+const (
+	hdrSize = 28 // traceID(16) + insertedAt(8) + dataLen(4)
+	HdrSize = hdrSize
+)
 
 var (
 	zeroID       [16]byte

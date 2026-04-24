@@ -14,20 +14,18 @@ import (
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/buffer"
 )
 
-const (
-	traceA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	traceB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	traceC = "cccccccccccccccccccccccccccccccc"
+var (
+	traceA = [16]byte{0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa}
+	traceB = [16]byte{0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb}
+	traceC = [16]byte{0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc}
 )
 
-func singleSpanTraces(traceIDStr string, statusCode ptrace.StatusCode, durationMs int64) ptrace.Traces {
+func singleSpanTraces(traceID [16]byte, statusCode ptrace.StatusCode, durationMs int64) ptrace.Traces {
 	td := ptrace.NewTraces()
 	rs := td.ResourceSpans().AppendEmpty()
 	ss := rs.ScopeSpans().AppendEmpty()
 	span := ss.Spans().AppendEmpty()
-	var tid [16]byte
-	copy(tid[:], traceIDStr)
-	span.SetTraceID(pcommon.TraceID(tid))
+	span.SetTraceID(pcommon.TraceID(traceID))
 	span.Status().SetCode(statusCode)
 	now := time.Now()
 	span.SetStartTimestamp(pcommon.NewTimestampFromTime(now))
@@ -41,7 +39,7 @@ func recSize(t *testing.T, spans ptrace.Traces) int64 {
 	m := ptrace.ProtoMarshaler{}
 	data, err := m.MarshalTraces(spans)
 	require.NoError(t, err)
-	return int64(44 + len(data))
+	return int64(buffer.HdrSize + len(data))
 }
 
 func newBuf(t *testing.T) *buffer.SpanBuffer {
@@ -115,7 +113,7 @@ func TestPartialDeltaEviction(t *testing.T) {
 func TestWrap(t *testing.T) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 	rs := recSize(t, tr)
-	// 5 bytes left after 2 records — too small for a skip record header (< 44), no skip written.
+	// 5 bytes left after 2 records — too small for a skip record header (< 28), no skip written.
 	buf := newBufSize(t, 2*rs+5)
 
 	now := time.Now()
@@ -157,7 +155,7 @@ func TestEvictionObserverCalledForLiveRecord(t *testing.T) {
 func TestWrapWithSkipRecord(t *testing.T) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 	rs := recSize(t, tr)
-	// 50 bytes left after 2 records — >= 44, so wrapLocked writes a skip record.
+	// 50 bytes left after 2 records — >= 28, so wrapLocked writes a skip record.
 	buf := newBufSize(t, 2*rs+50)
 
 	now := time.Now()
