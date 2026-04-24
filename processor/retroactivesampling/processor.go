@@ -144,12 +144,13 @@ func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.T
 
 func (p *retroactiveProcessor) onDecision(traceID string) {
 	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID))
-	p.ic.Add(traceID)
 	var raw [16]byte
-	if _, err := hex.Decode(raw[:], []byte(traceID)); err != nil {
+	n, err := hex.Decode(raw[:], []byte(traceID))
+	if err != nil || n != 16 {
 		p.logger.Warn("coordinator decision: invalid trace ID", zap.String("trace_id", traceID), zap.Error(err))
 		return
 	}
+	p.ic.Add(traceID)
 	traces, ok, err := p.buf.ReadAndDelete(raw)
 	if err != nil {
 		p.logger.Warn("coordinator decision: error fetching buffered trace", zap.String("trace_id", traceID), zap.Error(err))
