@@ -3,10 +3,12 @@
 package metadata
 
 import (
+	"context"
 	"errors"
 	"sync"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/embedded"
 	"go.opentelemetry.io/otel/trace"
 
 	"go.opentelemetry.io/collector/component"
@@ -26,6 +28,8 @@ type TelemetryBuilder struct {
 	meter                                      metric.Meter
 	mu                                         sync.Mutex
 	registrations                              []metric.Registration
+	RetroactiveSamplingBufferLiveBytes         metric.Int64ObservableGauge
+	RetroactiveSamplingBufferOrphanedBytes     metric.Int64ObservableGauge
 	RetroactiveSamplingBufferSpanAgeOnEviction metric.Int64Histogram
 }
 
@@ -38,6 +42,46 @@ type telemetryBuilderOptionFunc func(mb *TelemetryBuilder)
 
 func (tbof telemetryBuilderOptionFunc) apply(mb *TelemetryBuilder) {
 	tbof(mb)
+}
+
+// RegisterRetroactiveSamplingBufferLiveBytesCallback sets callback for observable RetroactiveSamplingBufferLiveBytes metric.
+func (builder *TelemetryBuilder) RegisterRetroactiveSamplingBufferLiveBytesCallback(cb metric.Int64Callback) error {
+	reg, err := builder.meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		cb(ctx, &observerInt64{inst: builder.RetroactiveSamplingBufferLiveBytes, obs: o})
+		return nil
+	}, builder.RetroactiveSamplingBufferLiveBytes)
+	if err != nil {
+		return err
+	}
+	builder.mu.Lock()
+	defer builder.mu.Unlock()
+	builder.registrations = append(builder.registrations, reg)
+	return nil
+}
+
+// RegisterRetroactiveSamplingBufferOrphanedBytesCallback sets callback for observable RetroactiveSamplingBufferOrphanedBytes metric.
+func (builder *TelemetryBuilder) RegisterRetroactiveSamplingBufferOrphanedBytesCallback(cb metric.Int64Callback) error {
+	reg, err := builder.meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		cb(ctx, &observerInt64{inst: builder.RetroactiveSamplingBufferOrphanedBytes, obs: o})
+		return nil
+	}, builder.RetroactiveSamplingBufferOrphanedBytes)
+	if err != nil {
+		return err
+	}
+	builder.mu.Lock()
+	defer builder.mu.Unlock()
+	builder.registrations = append(builder.registrations, reg)
+	return nil
+}
+
+type observerInt64 struct {
+	embedded.Int64Observer
+	inst metric.Int64Observable
+	obs  metric.Observer
+}
+
+func (oi *observerInt64) Observe(value int64, opts ...metric.ObserveOption) {
+	oi.obs.ObserveInt64(oi.inst, value, opts...)
 }
 
 // Shutdown unregister all registered callbacks for async instruments.
@@ -58,6 +102,18 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	}
 	builder.meter = Meter(settings)
 	var err, errs error
+	builder.RetroactiveSamplingBufferLiveBytes, err = builder.meter.Int64ObservableGauge(
+		"otelcol_retroactive_sampling_buffer_live_bytes",
+		metric.WithDescription("Bytes in the ring buffer still reachable by traceID [Development]"),
+		metric.WithUnit("By"),
+	)
+	errs = errors.Join(errs, err)
+	builder.RetroactiveSamplingBufferOrphanedBytes, err = builder.meter.Int64ObservableGauge(
+		"otelcol_retroactive_sampling_buffer_orphaned_bytes",
+		metric.WithDescription("Bytes in ring buffer used accounting but no longer indexed (pending sweep) [Development]"),
+		metric.WithUnit("By"),
+	)
+	errs = errors.Join(errs, err)
 	builder.RetroactiveSamplingBufferSpanAgeOnEviction, err = builder.meter.Int64Histogram(
 		"otelcol_retroactive_sampling_buffer_span_age_on_eviction",
 		metric.WithDescription("Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure [Development]"),

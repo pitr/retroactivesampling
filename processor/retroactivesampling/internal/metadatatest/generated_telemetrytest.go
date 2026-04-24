@@ -21,6 +21,34 @@ func NewSettings(tt *componenttest.Telemetry) processor.Settings {
 	return set
 }
 
+func AssertEqualRetroactiveSamplingBufferLiveBytes(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_retroactive_sampling_buffer_live_bytes",
+		Description: "Bytes in the ring buffer still reachable by traceID [Development]",
+		Unit:        "By",
+		Data: metricdata.Gauge[int64]{
+			DataPoints: dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_retroactive_sampling_buffer_live_bytes")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
+func AssertEqualRetroactiveSamplingBufferOrphanedBytes(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_retroactive_sampling_buffer_orphaned_bytes",
+		Description: "Bytes in ring buffer used accounting but no longer indexed (pending sweep) [Development]",
+		Unit:        "By",
+		Data: metricdata.Gauge[int64]{
+			DataPoints: dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_retroactive_sampling_buffer_orphaned_bytes")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
 func AssertEqualRetroactiveSamplingBufferSpanAgeOnEviction(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.HistogramDataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
 		Name:        "otelcol_retroactive_sampling_buffer_span_age_on_eviction",

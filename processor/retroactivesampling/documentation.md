@@ -6,6 +6,22 @@
 
 The following telemetry is emitted by this component.
 
+### otelcol_retroactive_sampling_buffer_live_bytes
+
+Bytes in the ring buffer still reachable by traceID
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| By | Gauge | Int | Development |
+
+### otelcol_retroactive_sampling_buffer_orphaned_bytes
+
+Bytes in ring buffer used accounting but no longer indexed (pending sweep)
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| By | Gauge | Int | Development |
+
 ### otelcol_retroactive_sampling_buffer_span_age_on_eviction
 
 Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure

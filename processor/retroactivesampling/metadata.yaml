@@ -16,6 +16,24 @@ status:
 
 telemetry:
   metrics:
+    retroactive_sampling_buffer_live_bytes:
+      description: Bytes in the ring buffer still reachable by traceID
+      stability: development
+      unit: By
+      enabled: true
+      gauge:
+        value_type: int
+        async: true
+
+    retroactive_sampling_buffer_orphaned_bytes:
+      description: Bytes in ring buffer used accounting but no longer indexed (pending sweep)
+      stability: development
+      unit: By
+      enabled: true
+      gauge:
+        value_type: int
+        async: true
+
     retroactive_sampling_buffer_span_age_on_eviction:
       description: Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure
       stability: development
