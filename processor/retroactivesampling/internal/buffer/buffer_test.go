@@ -253,3 +253,24 @@ func TestLiveBytesDecrementedOnEviction(t *testing.T) {
 	assert.Equal(t, rs, buf.LiveBytes(), "only traceB remains live")
 	assert.Equal(t, int64(0), buf.OrphanedBytes())
 }
+
+func TestOrphanedBytesDecreasedAfterSweep(t *testing.T) {
+	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
+	rs := recSize(t, tr)
+	buf := newBufSize(t, rs)
+
+	now := time.Now()
+	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100), now))
+
+	_, ok, err := buf.ReadAndDelete(traceA)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	orphanedBefore := buf.OrphanedBytes()
+	assert.Equal(t, rs, orphanedBefore, "orphaned bytes should equal the evicted record")
+
+	// Writing traceB triggers sweepOneLocked which sweeps the orphaned traceA record.
+	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
+
+	assert.Less(t, buf.OrphanedBytes(), orphanedBefore, "orphaned bytes should decrease after sweep")
+}
