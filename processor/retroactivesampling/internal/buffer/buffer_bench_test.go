@@ -1,6 +1,7 @@
 package buffer_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,16 +21,12 @@ func newBufSizeB(b *testing.B, maxBytes int64) *buffer.SpanBuffer {
 }
 
 // BenchmarkWrite measures write throughput under eviction pressure. The buffer
-// holds exactly two records, so every write after warm-up triggers an eviction,
+// is sized to 2 memory pages, so writes trigger eviction once full,
 // exercising the steady-state hot path.
 func BenchmarkWrite(b *testing.B) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-	m := ptrace.ProtoMarshaler{}
-	data, err := m.MarshalTraces(tr)
-	require.NoError(b, err)
-	rs := int64(44 + len(data))
 
-	buf := newBufSizeB(b, 2*rs)
+	buf := newBufSizeB(b, 2*int64(os.Getpagesize()))
 	now := time.Now()
 
 	b.ReportAllocs()
