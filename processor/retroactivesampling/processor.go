@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/buffer"
@@ -48,6 +49,22 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	}
 	chain, err := evaluator.Build(set, cfg.Policies)
 	if err != nil {
+		_ = buf.Close()
+		tb.Shutdown()
+		return nil, err
+	}
+	if err := tb.RegisterRetroactiveSamplingBufferLiveBytesCallback(func(_ context.Context, o metric.Int64Observer) error {
+		o.Observe(buf.LiveBytes())
+		return nil
+	}); err != nil {
+		_ = buf.Close()
+		tb.Shutdown()
+		return nil, err
+	}
+	if err := tb.RegisterRetroactiveSamplingBufferOrphanedBytesCallback(func(_ context.Context, o metric.Int64Observer) error {
+		o.Observe(buf.OrphanedBytes())
+		return nil
+	}); err != nil {
 		_ = buf.Close()
 		tb.Shutdown()
 		return nil, err
