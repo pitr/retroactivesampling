@@ -99,6 +99,11 @@ func TestPartialDeltaEviction(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceA, singleSpanTraces(traceA, ptrace.StatusCodeOk, 200), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
 
+	rsA200 := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 200))
+	rsB := recSize(t, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100))
+	assert.Equal(t, rsA200+rsB, buf.LiveBytes(), "first traceA delta evicted, second + traceB are live")
+	assert.Greater(t, buf.OrphanedBytes(), int64(0), "evicted first delta remains in ring until swept")
+
 	got, ok, err := buf.ReadAndDelete(traceA)
 	require.NoError(t, err)
 	require.True(t, ok, "traceA should still be readable via its second delta")
@@ -163,6 +168,9 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceB, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceC, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100), now.Add(2*time.Millisecond)))
 
+	// The skip/pad record at the tail is orphaned (never indexed).
+	assert.Greater(t, buf.OrphanedBytes(), int64(0), "pad record bytes are orphaned immediately")
+
 	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted after wrap with skip record")
 
@@ -206,6 +214,8 @@ func TestReadAndDeleteMultipleDeltas(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, 2, got.SpanCount())
+	assert.Equal(t, int64(0), buf.LiveBytes(), "both deltas removed from live index")
+	assert.Greater(t, buf.OrphanedBytes(), int64(0), "bytes remain in ring until swept")
 
 	_, ok, _ = buf.ReadAndDelete(traceA)
 	assert.False(t, ok)
