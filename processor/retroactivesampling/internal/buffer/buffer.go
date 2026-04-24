@@ -14,10 +14,10 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-const hdrSize = 44 // traceID(32) + insertedAt(8) + dataLen(4)
+const hdrSize = 28 // traceID(16) + insertedAt(8) + dataLen(4)
 
 var (
-	zeroID       [32]byte
+	zeroID       [16]byte
 	mmapPageSize = int64(os.Getpagesize())
 )
 
@@ -34,7 +34,7 @@ type SpanBuffer struct {
 	rHead         int64
 	used          int64
 	lastMadvise   int64
-	entries       map[string][]deltaRecord
+	entries       map[[16]byte][]deltaRecord
 	evictObserver func(time.Duration)
 	mu            sync.Mutex
 }
@@ -74,7 +74,7 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 		maxBytes:      maxBytes,
 		f:             f,
 		data:          data,
-		entries:       make(map[string][]deltaRecord),
+		entries:       make(map[[16]byte][]deltaRecord),
 		evictObserver: evictObserver,
 	}, nil
 }
@@ -97,7 +97,7 @@ func (b *SpanBuffer) Close() error {
 	return f.Close()
 }
 
-func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, insertedAt time.Time) error {
+func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, spans ptrace.Traces, insertedAt time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -116,7 +116,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 		remaining := b.maxBytes - b.wHead
 		if remaining >= hdrSize {
 			var hdr [hdrSize]byte
-			binary.BigEndian.PutUint32(hdr[40:44], uint32(remaining-hdrSize))
+			binary.BigEndian.PutUint32(hdr[24:28], uint32(remaining-hdrSize))
 			copy(b.data[b.wHead:], hdr[:])
 		}
 		b.used += remaining
@@ -128,9 +128,9 @@ func (b *SpanBuffer) WriteWithEviction(traceID string, spans ptrace.Traces, inse
 	}
 
 	offset := b.wHead
-	copy(b.data[offset:], traceID)
-	binary.BigEndian.PutUint64(b.data[offset+32:], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(b.data[offset+40:], uint32(len(delta)))
+	copy(b.data[offset:], traceID[:])
+	binary.BigEndian.PutUint64(b.data[offset+16:], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(b.data[offset+24:], uint32(len(delta)))
 	copy(b.data[offset+hdrSize:], delta)
 
 	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(delta))})
@@ -151,23 +151,24 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	}
 
 	hdr := b.data[b.rHead : b.rHead+hdrSize]
-	dataLen := int64(binary.BigEndian.Uint32(hdr[40:44]))
+	dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
 	recSize := int64(hdrSize) + dataLen
 
-	if bytes.Equal(hdr[:32], zeroID[:]) {
+	if bytes.Equal(hdr[:16], zeroID[:]) {
 		b.used -= recSize
 		b.rHead = 0
 		b.madviseSwept()
 		return
 	}
 
-	traceID := string(bytes.TrimRight(hdr[:32], "\x00"))
-	if deltas, ok := b.entries[traceID]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
-		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[32:40])))
+	var key [16]byte
+	copy(key[:], hdr[:16])
+	if deltas, ok := b.entries[key]; ok && len(deltas) > 0 && deltas[0].offset == b.rHead {
+		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 		b.evictObserver(now.Sub(insertedAt))
-		b.entries[traceID] = deltas[1:]
-		if len(b.entries[traceID]) == 0 {
-			delete(b.entries, traceID)
+		b.entries[key] = deltas[1:]
+		if len(b.entries[key]) == 0 {
+			delete(b.entries, key)
 		}
 	}
 
@@ -198,7 +199,7 @@ func (b *SpanBuffer) madviseSwept() {
 	}
 }
 
-func (b *SpanBuffer) ReadAndDelete(traceID string) (ptrace.Traces, bool, error) {
+func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) (ptrace.Traces, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
