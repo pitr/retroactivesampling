@@ -2,7 +2,6 @@
 
 ## Small items
 
-- [ ] rename upstream mode in coordinator to proxy, update all docs
 - [ ] update "When to use this over tail sampling" in readme with suggestion to move to daisy chain when network break even is reached. also use a more realistic 15kb per trace instead of 40kb
 
 ## Large items

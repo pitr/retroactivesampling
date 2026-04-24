@@ -20,7 +20,7 @@ import (
 	"pitr.ca/retroactivesampling/coordinator/memory"
 	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
-	"pitr.ca/retroactivesampling/coordinator/upstream"
+	"pitr.ca/retroactivesampling/coordinator/proxy"
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
@@ -105,12 +105,12 @@ func main() {
 		if err != nil {
 			fatal("redis", "err", err)
 		}
-	case *UpstreamConfig:
+	case *ProxyConfig:
 		if m.Endpoint == "" {
-			fatal("upstream mode: endpoint is required")
+			fatal("proxy mode: endpoint is required")
 		}
-		slog.Info("running in upstream mode", "endpoint", m.Endpoint)
-		ps = upstream.New(m.Endpoint)
+		slog.Info("running in proxy mode", "endpoint", m.Endpoint)
+		ps = proxy.New(m.Endpoint)
 	default:
 		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}

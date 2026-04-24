@@ -1,4 +1,4 @@
-package upstream_test
+package proxy_test
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"pitr.ca/retroactivesampling/coordinator/memory"
+	"pitr.ca/retroactivesampling/coordinator/proxy"
 	"pitr.ca/retroactivesampling/coordinator/server"
-	"pitr.ca/retroactivesampling/coordinator/upstream"
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
@@ -28,8 +28,8 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 	}()
 	centralAddr := startGRPCServer(t, centralSrv)
 
-	// Local coordinator: upstream PubSub pointing at central.
-	localPS := upstream.New(centralAddr)
+	// Local coordinator: proxy PubSub pointing at central.
+	localPS := proxy.New(centralAddr)
 	t.Cleanup(func() { _ = localPS.Close() })
 
 	localSrv := server.New(func(traceID []byte) {
@@ -66,7 +66,7 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 	require.NoError(t, err)
 
 	// Expect BatchTraceDecision to arrive via: local→central→central-mem→central.Broadcast
-	// →local-upstream-client→local.Broadcast→collector.
+	// →local-proxy-client→local.Broadcast→collector.
 	msg, err := stream.Recv()
 	require.NoError(t, err)
 	b := msg.GetBatch()

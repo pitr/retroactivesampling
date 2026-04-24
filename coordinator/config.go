@@ -22,7 +22,7 @@ type Config struct {
 type ModeConfig struct {
 	Single      *SingleConfig      `yaml:"single"`
 	Distributed *DistributedConfig `yaml:"distributed"`
-	Upstream    *UpstreamConfig    `yaml:"upstream"`
+	Proxy       *ProxyConfig       `yaml:"proxy"`
 }
 
 func (m ModeConfig) active() (any, error) {
@@ -36,9 +36,9 @@ func (m ModeConfig) active() (any, error) {
 		n++
 		result = m.Distributed
 	}
-	if m.Upstream != nil {
+	if m.Proxy != nil {
 		n++
-		result = m.Upstream
+		result = m.Proxy
 	}
 	if n != 1 {
 		return nil, fmt.Errorf("exactly one mode must be configured (got %d)", n)
@@ -56,7 +56,7 @@ type DistributedConfig struct {
 	RedisReplicas []redis.Config `yaml:"redis_replicas"`
 }
 
-type UpstreamConfig struct {
+type ProxyConfig struct {
 	Endpoint string `yaml:"endpoint"`
 }
 

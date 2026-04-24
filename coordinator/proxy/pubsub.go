@@ -1,4 +1,4 @@
-package upstream
+package proxy
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func New(endpoint string) *PubSub {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		slog.Error("upstream: new client", "endpoint", endpoint, "err", err)
+		slog.Error("proxy: new client", "endpoint", endpoint, "err", err)
 		os.Exit(1)
 	}
 	p := &PubSub{
@@ -47,17 +47,17 @@ func New(endpoint string) *PubSub {
 	return p
 }
 
-// Always returns (false, nil) — no local dedup; novel count is tracked by the upstream coordinator.
+// Always returns (false, nil) — no local dedup; novel count is tracked by the parent coordinator.
 func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
 	select {
 	case p.sendCh <- traceID:
 	default:
-		slog.Warn("upstream: send buffer full, dropping notify", "trace_id", fmt.Sprintf("%x", traceID))
+		slog.Warn("proxy: send buffer full, dropping notify", "trace_id", fmt.Sprintf("%x", traceID))
 	}
 	return false, nil
 }
 
-// Call before meaningful upstream decisions are expected to avoid a startup race.
+// Call before meaningful decisions are expected from the parent to avoid a startup race.
 func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
 	p.mu.Lock()
 	p.handlers = append(p.handlers, handler)
@@ -82,7 +82,7 @@ func (p *PubSub) run() {
 		}
 		stream, err := gen.NewCoordinatorClient(p.conn).Connect(p.ctx)
 		if err != nil {
-			slog.Warn("upstream: connect failed, retrying", "backoff", backoff, "err", err)
+			slog.Warn("proxy: connect failed, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
 				return
@@ -94,7 +94,7 @@ func (p *PubSub) run() {
 		recvErr := make(chan error, 1)
 		go p.recv(stream, recvErr)
 		if err := p.send(stream, recvErr); err != nil {
-			slog.Warn("upstream: connection lost, retrying", "backoff", backoff, "err", err)
+			slog.Warn("proxy: connection lost, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
 				return

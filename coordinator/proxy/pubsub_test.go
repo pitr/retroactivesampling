@@ -1,4 +1,4 @@
-package upstream_test
+package proxy_test
 
 import (
 	"context"
@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
+	"pitr.ca/retroactivesampling/coordinator/proxy"
 	gen "pitr.ca/retroactivesampling/proto"
-	"pitr.ca/retroactivesampling/coordinator/upstream"
 )
 
 // mockServer implements gen.CoordinatorServer. notified receives traceID hex
@@ -84,7 +84,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := upstream.New(addr)
+	ps := proxy.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	novel, err := ps.Publish(t.Context(), traceBytes)
@@ -95,7 +95,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	case id := <-mock.notified:
 		assert.Equal(t, traceHex, id)
 	case <-time.After(3 * time.Second):
-		t.Fatal("timeout: NotifyInteresting not received by upstream")
+		t.Fatal("timeout: NotifyInteresting not received by parent coordinator")
 	}
 }
 
@@ -103,13 +103,13 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := upstream.New(addr)
+	ps := proxy.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	for range 3 {
 		novel, err := ps.Publish(t.Context(), traceBytes)
 		require.NoError(t, err)
-		assert.False(t, novel, "upstream.PubSub has no local dedup — novel count tracked upstream")
+		assert.False(t, novel, "proxy.PubSub has no local dedup — novel count tracked by parent coordinator")
 	}
 }
 
@@ -117,7 +117,7 @@ func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := upstream.New(addr)
+	ps := proxy.New(addr)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	received := make(chan []byte, 1)
@@ -131,7 +131,7 @@ func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
 	select {
 	case <-mock.connected:
 	case <-time.After(3 * time.Second):
-		t.Fatal("upstream connection not established")
+		t.Fatal("proxy connection not established")
 	}
 
 	mock.decisionCh <- traceBytes
@@ -151,7 +151,7 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close() // immediately release so nothing is listening
 
-	ps := upstream.New(addr)
+	ps := proxy.New(addr)
 	done := make(chan struct{})
 	go func() { _ = ps.Close(); close(done) }()
 
