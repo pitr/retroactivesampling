@@ -2,11 +2,13 @@ package retroactivesampling
 
 import (
 	"context"
+	"encoding/hex"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.opentelemetry.io/collector/consumer"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
 	"go.uber.org/zap"
@@ -79,25 +81,25 @@ func (p *retroactiveProcessor) Shutdown(_ context.Context) error {
 func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces) (ptrace.Traces, error) {
 	out := ptrace.NewTraces()
 	now := time.Now()
-	for traceID, spans := range groupByTrace(td) {
-		if p.ic.Has(traceID) {
+	for tid, spans := range groupByTrace(td) {
+		if p.ic.Has(tid.String()) {
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
 		d, err := p.eval.Evaluate(spans)
 		if err != nil {
-			p.logger.Warn("policy evaluation error", zap.String("trace_id", traceID), zap.Error(err))
+			p.logger.Warn("policy evaluation error", zap.String("trace_id", tid.String()), zap.Error(err))
 		}
 		switch d {
 		case evaluator.Sampled:
-			p.ingestInteresting(traceID, spans)
+			p.ingestInteresting(tid, spans)
 			continue
 		case evaluator.SampledLocal:
-			p.ingestLocal(traceID, spans)
+			p.ingestLocal(tid, spans)
 			continue
 		}
-		if err := p.buf.WriteWithEviction(traceID, spans, now); err != nil {
-			p.logger.Error("buffer full after eviction", zap.String("trace_id", traceID), zap.Error(err))
+		if err := p.buf.WriteWithEviction([16]byte(tid), spans, now); err != nil {
+			p.logger.Error("buffer full after eviction", zap.String("trace_id", tid.String()), zap.Error(err))
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
@@ -108,25 +110,26 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 	return out, nil
 }
 
-func (p *retroactiveProcessor) ingestInteresting(traceID string, current ptrace.Traces) {
-	p.ic.Add(traceID)
+func (p *retroactiveProcessor) ingestInteresting(tid pcommon.TraceID, current ptrace.Traces) {
+	tidStr := tid.String()
+	p.ic.Add(tidStr)
 	if p.coord != nil {
-		p.coord.Notify(traceID)
+		p.coord.Notify(tidStr)
 	}
-	p.ingestTrace(traceID, current)
+	p.ingestTrace(tid, current)
 }
 
-func (p *retroactiveProcessor) ingestLocal(traceID string, current ptrace.Traces) {
-	p.ic.Add(traceID)
-	p.ingestTrace(traceID, current)
+func (p *retroactiveProcessor) ingestLocal(tid pcommon.TraceID, current ptrace.Traces) {
+	p.ic.Add(tid.String())
+	p.ingestTrace(tid, current)
 }
 
-func (p *retroactiveProcessor) ingestTrace(traceID string, current ptrace.Traces) {
-	buffered, ok, err := p.buf.ReadAndDelete(traceID)
+func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.Traces) {
+	buffered, ok, err := p.buf.ReadAndDelete([16]byte(tid))
 	if err != nil {
-		p.logger.Warn("read buffer", zap.String("trace_id", traceID), zap.Error(err))
+		p.logger.Warn("read buffer", zap.String("trace_id", tid.String()), zap.Error(err))
 		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
-			p.logger.Error("ingest trace", zap.String("trace_id", traceID), zap.Error(err2))
+			p.logger.Error("ingest trace", zap.String("trace_id", tid.String()), zap.Error(err2))
 		}
 		return
 	}
@@ -135,14 +138,19 @@ func (p *retroactiveProcessor) ingestTrace(traceID string, current ptrace.Traces
 		current = buffered
 	}
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("ingest trace", zap.String("trace_id", traceID), zap.Error(err))
+		p.logger.Error("ingest trace", zap.String("trace_id", tid.String()), zap.Error(err))
 	}
 }
 
 func (p *retroactiveProcessor) onDecision(traceID string) {
 	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID))
 	p.ic.Add(traceID)
-	traces, ok, err := p.buf.ReadAndDelete(traceID)
+	var raw [16]byte
+	if _, err := hex.Decode(raw[:], []byte(traceID)); err != nil {
+		p.logger.Warn("coordinator decision: invalid trace ID", zap.String("trace_id", traceID), zap.Error(err))
+		return
+	}
+	traces, ok, err := p.buf.ReadAndDelete(raw)
 	if err != nil {
 		p.logger.Warn("coordinator decision: error fetching buffered trace", zap.String("trace_id", traceID), zap.Error(err))
 		return
