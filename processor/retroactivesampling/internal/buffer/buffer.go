@@ -16,7 +16,6 @@ import (
 
 const (
 	hdrSize = 28 // traceID(16) + insertedAt(8) + dataLen(4)
-	HdrSize = hdrSize
 )
 
 var (

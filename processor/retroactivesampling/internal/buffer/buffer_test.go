@@ -39,7 +39,7 @@ func recSize(t *testing.T, spans ptrace.Traces) int64 {
 	m := ptrace.ProtoMarshaler{}
 	data, err := m.MarshalTraces(spans)
 	require.NoError(t, err)
-	return int64(buffer.HdrSize + len(data))
+	return int64(28 + len(data)) // 28 = hdrSize: traceID(16) + insertedAt(8) + dataLen(4)
 }
 
 func newBuf(t *testing.T) *buffer.SpanBuffer {
