@@ -22,13 +22,23 @@ func newBufSizeB(b *testing.B, maxBytes int64) *buffer.SpanBuffer {
 }
 
 // BenchmarkWrite measures write throughput under eviction pressure. The buffer
-// is sized to 2 memory pages, so writes trigger eviction once full,
-// exercising the steady-state hot path.
+// is pre-filled to capacity before timing so every write in the timed loop
+// triggers a sweep.
 func BenchmarkWrite(b *testing.B) {
 	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
 
-	buf := newBufSizeB(b, 2*int64(os.Getpagesize()))
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(tr)
+	require.NoError(b, err)
+	rs := int64(44 + len(data))
+
+	bufSize := 2 * int64(os.Getpagesize())
+	buf := newBufSizeB(b, bufSize)
 	now := time.Now()
+
+	for n := bufSize / rs; n > 0; n-- {
+		require.NoError(b, buf.WriteWithEviction(traceA, tr, now))
+	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
