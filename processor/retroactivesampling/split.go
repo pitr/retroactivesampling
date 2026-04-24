@@ -7,7 +7,7 @@ import (
 
 // groupByTrace splits a ptrace.Traces into per-trace-ID sub-Traces, preserving
 // ResourceSpans and ScopeSpans structure.
-func groupByTrace(td ptrace.Traces) map[string]ptrace.Traces {
+func groupByTrace(td ptrace.Traces) map[pcommon.TraceID]ptrace.Traces {
 	type rsKey struct {
 		tid   pcommon.TraceID
 		rsIdx int
@@ -51,9 +51,5 @@ func groupByTrace(td ptrace.Traces) map[string]ptrace.Traces {
 		}
 	}
 
-	result := make(map[string]ptrace.Traces, len(out))
-	for tid, traces := range out {
-		result[tid.String()] = traces
-	}
-	return result
+	return out
 }

@@ -43,7 +43,7 @@ func TestGroupByTrace_SingleSpan(t *testing.T) {
 	out := groupByTrace(td)
 
 	require.Len(t, out, 1)
-	traces, ok := out[tid.String()]
+	traces, ok := out[tid]
 	require.True(t, ok)
 	assert.Equal(t, 1, traces.SpanCount())
 }
@@ -58,8 +58,8 @@ func TestGroupByTrace_DifferentTraces(t *testing.T) {
 	out := groupByTrace(td)
 
 	require.Len(t, out, 2)
-	assert.Equal(t, 1, out[t1.String()].SpanCount())
-	assert.Equal(t, 1, out[t2.String()].SpanCount())
+	assert.Equal(t, 1, out[t1].SpanCount())
+	assert.Equal(t, 1, out[t2].SpanCount())
 }
 
 func TestGroupByTrace_SameTrace_MergesSpans(t *testing.T) {
@@ -72,7 +72,7 @@ func TestGroupByTrace_SameTrace_MergesSpans(t *testing.T) {
 	out := groupByTrace(td)
 
 	require.Len(t, out, 1)
-	assert.Equal(t, 2, out[tid.String()].SpanCount())
+	assert.Equal(t, 2, out[tid].SpanCount())
 }
 
 func TestGroupByTrace_PreservesResourceAndScope(t *testing.T) {
@@ -81,7 +81,7 @@ func TestGroupByTrace_PreservesResourceAndScope(t *testing.T) {
 
 	out := groupByTrace(td)
 
-	traces := out[tid.String()]
+	traces := out[tid]
 	require.Equal(t, 1, traces.ResourceSpans().Len())
 	rs := traces.ResourceSpans().At(0)
 	v, ok := rs.Resource().Attributes().Get("service.name")
@@ -106,7 +106,7 @@ func TestGroupByTrace_MultipleResources_SameTrace(t *testing.T) {
 	out := groupByTrace(td)
 
 	require.Len(t, out, 1)
-	traces := out[tid.String()]
+	traces := out[tid]
 	assert.Equal(t, 2, traces.ResourceSpans().Len())
 	assert.Equal(t, 2, traces.SpanCount())
 }
