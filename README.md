@@ -34,7 +34,9 @@ Retroactive sampling avoids the forwarding hop entirely: spans stay on the colle
 trace_size_bytes / (20 × effective_sampling_rate)
 ```
 
-For 40 KB average traces at 5% sampling that threshold is ~41,000 collectors — well above most fleet sizes. Below the threshold retroactive sampling uses less network; above it traditional wins on raw bytes, though the broadcast messages (20 bytes each) are far cheaper to process per byte than full span blobs, so the real compute break-even is higher still.
+For 15 KB average traces at 5% sampling that threshold is ~15,000 collectors. Below the threshold retroactive sampling uses less network; above it traditional wins on raw bytes, though the broadcast messages (20 bytes each) are far cheaper to process per byte than full span blobs, so the real compute break-even is higher still.
+
+If your fleet approaches this threshold, consider switching to a [daisy-chain topology](coordinator/README.md#proxy) (proxy mode): each cluster runs a local coordinator that forwards to a central coordinator, reducing broadcast traffic from `I × P × M` to `I × K × M` where K is the number of clusters. This pushes the break-even up by a factor of P/K.
 
 **Other advantages over tail sampling:**
 
