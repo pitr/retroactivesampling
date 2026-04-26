@@ -3,7 +3,6 @@
 package redis_test
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os/exec"
@@ -43,46 +42,41 @@ func startRedis(t *testing.T) string {
 
 func TestPublishSubscribe(t *testing.T) {
 	addr := startRedis(t)
-	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second)
+
+	received := make(chan []byte, 1)
+	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second, func(id []byte) { received <- id })
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	received := make(chan []byte, 1)
-	go func() { _ = ps.Subscribe(ctx, func(id []byte) { received <- id }) }()
 	// Wait for the Redis SUBSCRIBE command to be processed server-side before publishing.
 	// There is no hook to observe this from outside; 100 ms is well above a localhost round-trip.
 	time.Sleep(100 * time.Millisecond)
 
 	traceID := []byte("trace-abc")
-	ok, err := ps.Publish(ctx, traceID)
+	ok, err := ps.Publish(t.Context(), traceID)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
 	select {
 	case id := <-received:
 		assert.Equal(t, traceID, id)
-	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for message")
 	}
 }
 
 func TestPublishDeduplication(t *testing.T) {
 	addr := startRedis(t)
-	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second)
+	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
-	ctx := context.Background()
-
 	traceID := []byte("trace-xyz")
-	ok1, err := ps.Publish(ctx, traceID)
+	ok1, err := ps.Publish(t.Context(), traceID)
 	require.NoError(t, err)
 	assert.True(t, ok1, "first publish should succeed")
 
-	ok2, err := ps.Publish(ctx, traceID)
+	ok2, err := ps.Publish(t.Context(), traceID)
 	require.NoError(t, err)
 	assert.False(t, ok2, "duplicate publish should be suppressed")
 }

@@ -18,22 +18,40 @@ type PubSub struct {
 	writeClient *redis.Client
 	readClient  *redis.Client
 	ttl         time.Duration
+	handler     func([]byte)
+	ctx         context.Context
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
-func New(writeCfg Config, readCfg *Config, ttl time.Duration) (*PubSub, error) {
+func New(writeCfg Config, readCfg *Config, ttl time.Duration, handler func([]byte)) (*PubSub, error) {
 	writeOpts, err := writeCfg.options()
 	if err != nil {
 		return nil, err
 	}
 	wc := redis.NewClient(writeOpts)
-	if readCfg == nil {
-		return &PubSub{writeClient: wc, readClient: wc, ttl: ttl}, nil
+
+	rc := wc
+	if readCfg != nil {
+		readOpts, err := readCfg.options()
+		if err != nil {
+			return nil, err
+		}
+		rc = redis.NewClient(readOpts)
 	}
-	readOpts, err := readCfg.options()
-	if err != nil {
-		return nil, err
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &PubSub{
+		writeClient: wc,
+		readClient:  rc,
+		ttl:         ttl,
+		handler:     handler,
+		ctx:         ctx,
+		cancel:      cancel,
+		done:        make(chan struct{}),
 	}
-	return &PubSub{writeClient: wc, readClient: redis.NewClient(readOpts), ttl: ttl}, nil
+	go func() { defer close(p.done); p.receive() }()
+	return p, nil
 }
 
 // Publish publishes traceID if not already seen (SET NX + PUBLISH). Returns true if newly published.
@@ -44,34 +62,35 @@ func (p *PubSub) Publish(ctx context.Context, traceID []byte) (bool, error) {
 	key := fmt.Sprintf(decidedKeyFmt, traceID)
 	result, err := p.writeClient.SetArgs(ctx, key, 1, redis.SetArgs{TTL: p.ttl, Mode: "NX"}).Result()
 	if errors.Is(err, redis.Nil) {
-		return false, nil // key already existed
+		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
 	if result != "OK" {
-		return false, nil // key already existed (nil bulk → empty string path)
+		return false, nil
 	}
 	return true, p.writeClient.Publish(ctx, channel, traceID).Err()
 }
 
-// Subscribe calls handler for each traceID received. Blocks until ctx is cancelled.
-func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
-	sub := p.readClient.Subscribe(ctx, channel)
+func (p *PubSub) receive() {
+	sub := p.readClient.Subscribe(p.ctx, channel)
 	defer func() { _ = sub.Close() }()
 	for {
 		select {
 		case msg := <-sub.Channel():
-			if msg != nil {
-				handler([]byte(msg.Payload))
+			if msg != nil && p.handler != nil {
+				p.handler([]byte(msg.Payload))
 			}
-		case <-ctx.Done():
-			return nil
+		case <-p.ctx.Done():
+			return
 		}
 	}
 }
 
 func (p *PubSub) Close() error {
+	p.cancel()
+	<-p.done
 	err := p.writeClient.Close()
 	if p.readClient != p.writeClient {
 		if e := p.readClient.Close(); e != nil && err == nil {
