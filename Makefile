@@ -31,7 +31,6 @@ test:
 	go -C processor/retroactivesampling test ./... -timeout 30s
 
 bench:
-	go -C coordinator test -run ^$$ -bench . -benchmem -v ./...
 	go -C processor/retroactivesampling test -run ^$$ -bench . -benchmem -v ./...
 
 test-integration:

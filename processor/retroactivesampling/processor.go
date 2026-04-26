@@ -118,13 +118,11 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		m := ptrace.ProtoMarshaler{}
 		data, err := m.MarshalTraces(spans)
 		if err != nil {
-			p.logger.Error("marshal spans for buffer", zap.String("trace_id", tid.String()), zap.Error(err))
-			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
+			p.logger.Error("marshal spans for buffer, dropping", zap.String("trace_id", tid.String()), zap.Error(err))
 			continue
 		}
 		if err := p.buf.WriteWithEviction([16]byte(tid), data, now); err != nil {
-			p.logger.Error("buffer full after eviction", zap.String("trace_id", tid.String()), zap.Error(err))
-			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
+			p.logger.Error("could not store trace locally, dropping", zap.String("trace_id", tid.String()), zap.Error(err))
 			continue
 		}
 	}
