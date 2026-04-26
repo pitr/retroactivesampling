@@ -2,7 +2,9 @@
 
 ## Small items
 
+- [ ] all unit tests should be in the same package as what they test
 - [ ] move all span marshalling and unmarshalling out of buffer.go, that code is on a hot path. buffer should operate with byte arrays only
+- [ ] buffer.go should use uint64 more instead of ints
 
 ## Large items
 

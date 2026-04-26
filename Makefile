@@ -1,4 +1,4 @@
-.PHONY: build test test-integration lint proto collector clean generate
+.PHONY: build test test-integration bench lint proto collector clean generate
 
 COORDINATOR_BIN := bin/coordinator
 TRACEGEN_BIN    := bin/tracegen
@@ -29,6 +29,10 @@ test:
 	go -C proto test ./... -timeout 30s
 	go -C coordinator test ./... -timeout 30s
 	go -C processor/retroactivesampling test ./... -timeout 30s
+
+bench:
+	go -C coordinator test -run ^$$ -bench . -benchmem -v ./...
+	go -C processor/retroactivesampling test -run ^$$ -bench . -benchmem -v ./...
 
 test-integration:
 	go -C proto test -tags integration ./... -timeout 120s

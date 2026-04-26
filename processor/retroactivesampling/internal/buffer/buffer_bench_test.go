@@ -1,7 +1,7 @@
 package buffer_test
 
 import (
-	"fmt"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,8 +41,7 @@ func BenchmarkWrite(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = buf.WriteWithEviction(traceA, tr, now)
 	}
 }
@@ -57,9 +56,9 @@ func BenchmarkRead(b *testing.B) {
 	require.NoError(b, err)
 	rs := int64(44 + len(data))
 
-	traceIDs := make([]string, b.N)
+	traceIDs := make([][16]byte, b.N)
 	for i := range traceIDs {
-		traceIDs[i] = fmt.Sprintf("%032d", i)
+		binary.BigEndian.PutUint64(traceIDs[i][8:], uint64(i))
 	}
 
 	buf := newBufSizeB(b, int64(b.N)*rs+rs)
