@@ -16,10 +16,7 @@ const (
 	hdrSize = 28 // traceID(16) + insertedAt(8) + dataLen(4)
 )
 
-var (
-	zeroID       [16]byte
-	mmapPageSize = uint64(os.Getpagesize())
-)
+var zeroID [16]byte
 
 type deltaRecord struct {
 	offset uint64
@@ -34,7 +31,6 @@ type SpanBuffer struct {
 	rHead         uint64
 	used          uint64
 	liveBytes     uint64
-	lastMadvise   uint64
 	entries       map[[16]byte][]deltaRecord
 	evictObserver func(time.Duration)
 	mu            sync.Mutex
@@ -70,7 +66,6 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 		_ = f.Close()
 		return nil, err
 	}
-	_ = unix.Madvise(data, unix.MADV_SEQUENTIAL)
 	return &SpanBuffer{
 		maxBytes:      uint64(maxBytes),
 		f:             f,
@@ -102,7 +97,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	recSize := uint64(hdrSize + len(data))
+	recSize := hdrSize + uint64(len(data))
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
 	}
@@ -142,7 +137,6 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	if b.rHead+hdrSize > b.maxBytes {
 		b.used -= b.maxBytes - b.rHead
 		b.rHead = 0
-		b.madviseSwept()
 		return
 	}
 
@@ -153,7 +147,6 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	if bytes.Equal(hdr[:16], zeroID[:]) {
 		b.used -= recSize
 		b.rHead = 0
-		b.madviseSwept()
 		return
 	}
 
@@ -173,26 +166,6 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	b.rHead += recSize
 	if b.rHead >= b.maxBytes {
 		b.rHead = 0
-	}
-	b.madviseSwept()
-}
-
-// madviseSwept releases swept pages from RSS. Only issues the syscall when
-// rHead crosses a page boundary. On wrap (rHead==0), releases from
-// lastMadvise to end of file.
-func (b *SpanBuffer) madviseSwept() {
-	if b.rHead == 0 {
-		end := b.maxBytes &^ (mmapPageSize - 1)
-		if end > b.lastMadvise {
-			_ = unix.Madvise(b.data[b.lastMadvise:end], unix.MADV_DONTNEED)
-		}
-		b.lastMadvise = 0
-		return
-	}
-	aligned := b.rHead &^ (mmapPageSize - 1)
-	if aligned > b.lastMadvise {
-		_ = unix.Madvise(b.data[b.lastMadvise:aligned], unix.MADV_DONTNEED)
-		b.lastMadvise = aligned
 	}
 }
 

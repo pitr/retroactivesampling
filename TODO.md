@@ -3,7 +3,6 @@
 ## Small items
 
 - [ ] MoveAndAppendTo in processor are expensive, ingest traces as they are
-- [ ] remove madvise in buffer.go and compare benchmarks
 
 ## Large items
 

@@ -123,7 +123,6 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		}
 		if err := p.buf.WriteWithEviction(tid, data, now); err != nil {
 			p.logger.Error("could not store trace locally, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
-			continue
 		}
 	}
 	if out.SpanCount() == 0 {
