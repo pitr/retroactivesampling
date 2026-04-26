@@ -25,10 +25,8 @@ func newBufSizeB(b *testing.B, maxBytes int64) *buffer.SpanBuffer {
 // is pre-filled to capacity before timing so every write in the timed loop
 // triggers a sweep.
 func BenchmarkWrite(b *testing.B) {
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-
 	m := ptrace.ProtoMarshaler{}
-	data, err := m.MarshalTraces(tr)
+	data, err := m.MarshalTraces(singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
 	require.NoError(b, err)
 	rs := int64(44 + len(data))
 
@@ -37,22 +35,20 @@ func BenchmarkWrite(b *testing.B) {
 	now := time.Now()
 
 	for n := bufSize / rs; n > 0; n-- {
-		require.NoError(b, buf.WriteWithEviction(traceA, tr, now))
+		require.NoError(b, buf.WriteWithEviction(traceA, data, now))
 	}
 
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = buf.WriteWithEviction(traceA, tr, now)
+		_ = buf.WriteWithEviction(traceA, data, now)
 	}
 }
 
 // BenchmarkRead measures ReadAndDelete throughput. The buffer is pre-populated
 // with b.N entries before the timed loop starts so no writes occur during timing.
 func BenchmarkRead(b *testing.B) {
-	tr := singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)
-
 	m := ptrace.ProtoMarshaler{}
-	data, err := m.MarshalTraces(tr)
+	data, err := m.MarshalTraces(singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
 	require.NoError(b, err)
 	rs := int64(44 + len(data))
 
@@ -64,12 +60,12 @@ func BenchmarkRead(b *testing.B) {
 	buf := newBufSizeB(b, int64(b.N)*rs+rs)
 	now := time.Now()
 	for _, tid := range traceIDs {
-		require.NoError(b, buf.WriteWithEviction(tid, tr, now))
+		require.NoError(b, buf.WriteWithEviction(tid, data, now))
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for _, tid := range traceIDs {
-		_, _, _ = buf.ReadAndDelete(tid)
+		_, _ = buf.ReadAndDelete(tid)
 	}
 }

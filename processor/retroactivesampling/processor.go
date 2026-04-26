@@ -115,7 +115,14 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 			p.ingestLocal(tid, spans)
 			continue
 		}
-		if err := p.buf.WriteWithEviction([16]byte(tid), spans, now); err != nil {
+		m := ptrace.ProtoMarshaler{}
+		data, err := m.MarshalTraces(spans)
+		if err != nil {
+			p.logger.Error("marshal spans for buffer", zap.String("trace_id", tid.String()), zap.Error(err))
+			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
+			continue
+		}
+		if err := p.buf.WriteWithEviction([16]byte(tid), data, now); err != nil {
 			p.logger.Error("buffer full after eviction", zap.String("trace_id", tid.String()), zap.Error(err))
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
@@ -142,20 +149,23 @@ func (p *retroactiveProcessor) ingestLocal(tid pcommon.TraceID, current ptrace.T
 }
 
 func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.Traces) {
-	buffered, ok, err := p.buf.ReadAndDelete([16]byte(tid))
-	if err != nil {
-		p.logger.Warn("read buffer", zap.String("trace_id", tid.String()), zap.Error(err))
-		if err2 := p.next.ConsumeTraces(context.Background(), current); err2 != nil {
-			p.logger.Error("ingest trace", zap.String("trace_id", tid.String()), zap.Error(err2))
-		}
-		return
-	}
+	bufs, ok := p.buf.ReadAndDelete([16]byte(tid))
 	if ok {
-		current.ResourceSpans().MoveAndAppendTo(buffered.ResourceSpans())
-		current = buffered
+		u := ptrace.ProtoUnmarshaler{}
+		merged := ptrace.NewTraces()
+		for _, chunk := range bufs {
+			t, err := u.UnmarshalTraces(chunk)
+			if err != nil {
+				p.logger.Warn("unmarshal buffered trace", zap.String("trace_id", tid.String()), zap.Error(err))
+				continue
+			}
+			t.ResourceSpans().MoveAndAppendTo(merged.ResourceSpans())
+		}
+		current.ResourceSpans().MoveAndAppendTo(merged.ResourceSpans())
+		current = merged
 	}
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("ingest trace", zap.String("trace_id", tid.String()), zap.Error(err))
+		p.logger.Error("could not enrich interesting trace with spans from local disk", zap.String("trace_id", tid.String()), zap.Error(err))
 	}
 }
 
@@ -168,13 +178,19 @@ func (p *retroactiveProcessor) onDecision(traceID string) {
 		return
 	}
 	p.ic.Add(traceID)
-	traces, ok, err := p.buf.ReadAndDelete(raw)
-	if err != nil {
-		p.logger.Warn("coordinator decision: error fetching buffered trace", zap.String("trace_id", traceID), zap.Error(err))
-		return
-	}
+	bufs, ok := p.buf.ReadAndDelete(raw)
 	if !ok {
 		return
+	}
+	u := ptrace.ProtoUnmarshaler{}
+	traces := ptrace.NewTraces()
+	for _, chunk := range bufs {
+		t, err := u.UnmarshalTraces(chunk)
+		if err != nil {
+			p.logger.Warn("coordinator decision: unmarshal buffered trace", zap.String("trace_id", traceID), zap.Error(err))
+			continue
+		}
+		t.ResourceSpans().MoveAndAppendTo(traces.ResourceSpans())
 	}
 	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
 		p.logger.Error("ingest coordinator-decided trace", zap.String("trace_id", traceID), zap.Error(err))

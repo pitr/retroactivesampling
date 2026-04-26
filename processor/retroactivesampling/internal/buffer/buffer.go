@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-
-	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
 const (
@@ -100,17 +98,11 @@ func (b *SpanBuffer) Close() error {
 	return f.Close()
 }
 
-func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, spans ptrace.Traces, insertedAt time.Time) error {
+func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	m := ptrace.ProtoMarshaler{}
-	delta, err := m.MarshalTraces(spans)
-	if err != nil {
-		return err
-	}
-
-	recSize := int64(hdrSize + len(delta))
+	recSize := int64(hdrSize + len(data))
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
 	}
@@ -133,10 +125,10 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, spans ptrace.Traces, in
 	offset := b.wHead
 	copy(b.data[offset:], traceID[:])
 	binary.BigEndian.PutUint64(b.data[offset+16:], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(b.data[offset+24:], uint32(len(delta)))
-	copy(b.data[offset+hdrSize:], delta)
+	binary.BigEndian.PutUint32(b.data[offset+24:], uint32(len(data)))
+	copy(b.data[offset+hdrSize:], data)
 
-	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(delta))})
+	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(data))})
 	b.wHead += recSize
 	b.used += recSize
 	b.liveBytes += recSize
@@ -204,29 +196,24 @@ func (b *SpanBuffer) madviseSwept() {
 	}
 }
 
-func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) (ptrace.Traces, bool, error) {
+func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	deltas := b.entries[traceID]
 	if len(deltas) == 0 {
-		return ptrace.Traces{}, false, nil
+		return nil, false
 	}
 
-	u := ptrace.ProtoUnmarshaler{}
-	result := ptrace.NewTraces()
+	result := make([][]byte, 0, len(deltas))
 	for _, d := range deltas {
-		buf := make([]byte, d.size)
-		copy(buf, b.data[d.offset+hdrSize:])
-		t, err := u.UnmarshalTraces(buf)
-		if err != nil {
-			return ptrace.Traces{}, false, err
-		}
-		t.ResourceSpans().MoveAndAppendTo(result.ResourceSpans())
+		chunk := make([]byte, d.size)
+		copy(chunk, b.data[d.offset+hdrSize:])
+		result = append(result, chunk)
 		b.liveBytes -= int64(hdrSize) + int64(d.size)
 	}
 	delete(b.entries, traceID)
-	return result, true, nil
+	return result, true
 }
 
 func (b *SpanBuffer) LiveBytes() int64 {
