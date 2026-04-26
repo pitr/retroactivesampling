@@ -49,7 +49,8 @@ func marshalT(t *testing.T, tr ptrace.Traces) []byte {
 
 func readSpans(t *testing.T, buf *buffer.SpanBuffer, id [16]byte) (ptrace.Traces, bool) {
 	t.Helper()
-	chunks, ok := buf.ReadAndDelete(id)
+	chunks, ok, err := buf.ReadAndDelete(id)
+	require.NoError(t, err)
 	if !ok {
 		return ptrace.Traces{}, false
 	}
@@ -104,9 +105,9 @@ func TestEviction(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceA, marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)), now))
 	require.NoError(t, buf.WriteWithEviction(traceB, marshalT(t, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100)), now.Add(time.Millisecond)))
 
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted")
-	_, ok = buf.ReadAndDelete(traceB)
+	_, ok, _ = buf.ReadAndDelete(traceB)
 	assert.True(t, ok, "traceB should be present")
 }
 
@@ -145,7 +146,7 @@ func TestWrap(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceB, marshalT(t, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100)), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceC, marshalT(t, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100)), now.Add(2*time.Millisecond)))
 
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted after wrap")
 
 	got, ok := readSpans(t, buf, traceB)
@@ -188,7 +189,7 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	// The skip/pad record at the tail is orphaned (never indexed).
 	assert.Greater(t, buf.OrphanedBytes(), int64(0), "pad record bytes are orphaned immediately")
 
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok, "traceA should be evicted after wrap with skip record")
 
 	got, ok := readSpans(t, buf, traceC)
@@ -206,13 +207,13 @@ func TestReadAndDelete(t *testing.T) {
 	assert.Equal(t, 1, got.SpanCount())
 
 	// Second call: entry gone.
-	_, ok = buf.ReadAndDelete(traceA)
+	_, ok, _ = buf.ReadAndDelete(traceA)
 	assert.False(t, ok)
 }
 
 func TestReadAndDeleteMissing(t *testing.T) {
 	buf := newBuf(t)
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	assert.False(t, ok)
 }
 
@@ -229,7 +230,7 @@ func TestReadAndDeleteMultipleDeltas(t *testing.T) {
 	assert.Equal(t, int64(0), buf.LiveBytes(), "both deltas removed from live index")
 	assert.Greater(t, buf.OrphanedBytes(), int64(0), "bytes remain in ring until swept")
 
-	_, ok = buf.ReadAndDelete(traceA)
+	_, ok, _ = buf.ReadAndDelete(traceA)
 	assert.False(t, ok)
 }
 
@@ -245,7 +246,7 @@ func TestLiveBytesAndOrphanedBytes(t *testing.T) {
 	assert.Equal(t, rs, buf.LiveBytes())
 	assert.Equal(t, int64(0), buf.OrphanedBytes())
 
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	require.True(t, ok)
 	assert.Equal(t, int64(0), buf.LiveBytes())
 	assert.Equal(t, rs, buf.OrphanedBytes())
@@ -273,7 +274,7 @@ func TestOrphanedBytesDecreasedAfterSweep(t *testing.T) {
 	now := time.Now()
 	require.NoError(t, buf.WriteWithEviction(traceA, marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)), now))
 
-	_, ok := buf.ReadAndDelete(traceA)
+	_, ok, _ := buf.ReadAndDelete(traceA)
 	require.True(t, ok)
 
 	orphanedBefore := buf.OrphanedBytes()

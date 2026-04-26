@@ -146,7 +146,11 @@ func (p *retroactiveProcessor) recordLocal(tid pcommon.TraceID) {
 }
 
 func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
-	bufs, ok := p.buf.ReadAndDelete(tid)
+	bufs, ok, err := p.buf.ReadAndDelete(tid)
+	if err != nil {
+		p.logger.Error("read buffer", zap.Stringer("trace_id", tid), zap.Error(err))
+		return
+	}
 	if ok {
 		u := ptrace.ProtoUnmarshaler{}
 		for _, chunk := range bufs {
@@ -165,7 +169,11 @@ func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
 func (p *retroactiveProcessor) onDecision(traceID pcommon.TraceID) {
 	p.logger.Debug("coordinator decision received", zap.Stringer("trace_id", traceID))
 	p.ic.Add(traceID)
-	bufs, ok := p.buf.ReadAndDelete(traceID)
+	bufs, ok, err := p.buf.ReadAndDelete(traceID)
+	if err != nil {
+		p.logger.Error("read buffer", zap.Stringer("trace_id", traceID), zap.Error(err))
+		return
+	}
 	if !ok {
 		return
 	}

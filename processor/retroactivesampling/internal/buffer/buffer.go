@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -26,7 +24,6 @@ type deltaRecord struct {
 type SpanBuffer struct {
 	maxBytes      uint64
 	f             *os.File
-	data          []byte
 	wHead         uint64
 	rHead         uint64
 	used          uint64
@@ -61,15 +58,9 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 			return nil, err
 		}
 	}
-	data, err := unix.Mmap(int(f.Fd()), 0, int(maxBytes), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
-	if err != nil {
-		_ = f.Close()
-		return nil, err
-	}
 	return &SpanBuffer{
 		maxBytes:      uint64(maxBytes),
 		f:             f,
-		data:          data,
 		entries:       make(map[[16]byte][]deltaRecord),
 		evictObserver: evictObserver,
 	}, nil
@@ -77,19 +68,13 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 
 func (b *SpanBuffer) Close() error {
 	b.mu.Lock()
-	data := b.data
-	if data == nil {
+	f := b.f
+	if f == nil {
 		b.mu.Unlock()
 		return fmt.Errorf("already closed")
 	}
-	b.data = nil
-	f := b.f
 	b.f = nil
 	b.mu.Unlock()
-	if err := unix.Munmap(data); err != nil {
-		_ = f.Close()
-		return err
-	}
 	return f.Close()
 }
 
@@ -107,21 +92,31 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt
 		if remaining >= hdrSize {
 			var hdr [hdrSize]byte
 			binary.BigEndian.PutUint32(hdr[24:28], uint32(remaining-hdrSize))
-			copy(b.data[b.wHead:], hdr[:])
+			if _, err := b.f.WriteAt(hdr[:], int64(b.wHead)); err != nil {
+				return err
+			}
 		}
 		b.used += remaining
 		b.wHead = 0
 	}
 
 	for b.used+recSize > b.maxBytes {
-		b.sweepOneLocked(insertedAt)
+		if err := b.sweepOneLocked(insertedAt); err != nil {
+			return err
+		}
 	}
 
 	offset := b.wHead
-	copy(b.data[offset:], traceID[:])
-	binary.BigEndian.PutUint64(b.data[offset+16:], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(b.data[offset+24:], uint32(len(data)))
-	copy(b.data[offset+hdrSize:], data)
+	var hdr [hdrSize]byte
+	copy(hdr[:16], traceID[:])
+	binary.BigEndian.PutUint64(hdr[16:24], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(hdr[24:28], uint32(len(data)))
+	if _, err := b.f.WriteAt(hdr[:], int64(offset)); err != nil {
+		return err
+	}
+	if _, err := b.f.WriteAt(data, int64(offset+hdrSize)); err != nil {
+		return err
+	}
 
 	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, uint32(len(data))})
 	b.wHead += recSize
@@ -130,24 +125,27 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt
 	return nil
 }
 
-func (b *SpanBuffer) sweepOneLocked(now time.Time) {
+func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
 	if b.rHead >= b.maxBytes {
 		b.rHead = 0
 	}
 	if b.rHead+hdrSize > b.maxBytes {
 		b.used -= b.maxBytes - b.rHead
 		b.rHead = 0
-		return
+		return nil
 	}
 
-	hdr := b.data[b.rHead : b.rHead+hdrSize]
+	var hdr [hdrSize]byte
+	if _, err := b.f.ReadAt(hdr[:], int64(b.rHead)); err != nil {
+		return err
+	}
 	dataLen := uint64(binary.BigEndian.Uint32(hdr[24:28]))
 	recSize := uint64(hdrSize) + dataLen
 
 	if bytes.Equal(hdr[:16], zeroID[:]) {
 		b.used -= recSize
 		b.rHead = 0
-		return
+		return nil
 	}
 
 	var key [16]byte
@@ -167,26 +165,29 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	if b.rHead >= b.maxBytes {
 		b.rHead = 0
 	}
+	return nil
 }
 
-func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool) {
+func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	deltas := b.entries[traceID]
 	if len(deltas) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	result := make([][]byte, 0, len(deltas))
 	for _, d := range deltas {
 		chunk := make([]byte, d.size)
-		copy(chunk, b.data[d.offset+hdrSize:])
+		if _, err := b.f.ReadAt(chunk, int64(d.offset+hdrSize)); err != nil {
+			return nil, false, err
+		}
 		result = append(result, chunk)
 		b.liveBytes -= uint64(hdrSize) + uint64(d.size)
 	}
 	delete(b.entries, traceID)
-	return result, true
+	return result, true, nil
 }
 
 func (b *SpanBuffer) LiveBytes() int64 {
