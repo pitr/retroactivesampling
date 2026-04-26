@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configgrpc"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.uber.org/zap"
 
 	gen "pitr.ca/retroactivesampling/proto"
@@ -19,7 +20,7 @@ type Client struct {
 	host     component.Host
 	settings component.TelemetrySettings
 	handler  DecisionHandler
-	sendCh   chan string
+	sendCh   chan pcommon.TraceID
 	ctx      context.Context
 	cancel   context.CancelFunc
 	logger   *zap.Logger
@@ -33,7 +34,7 @@ func New(grpcCfg configgrpc.ClientConfig, host component.Host, settings componen
 		host:     host,
 		settings: settings,
 		handler:  handler,
-		sendCh:   make(chan string, 256),
+		sendCh:   make(chan pcommon.TraceID, 256),
 		ctx:      ctx,
 		cancel:   cancel,
 		logger:   logger,
@@ -43,12 +44,12 @@ func New(grpcCfg configgrpc.ClientConfig, host component.Host, settings componen
 	return c
 }
 
-func (c *Client) Notify(traceID string) {
+func (c *Client) Notify(traceID pcommon.TraceID) {
 	select {
 	case c.sendCh <- traceID:
-		c.logger.Debug("coordinator: queued notify", zap.String("trace_id", traceID), zap.Int("queue_len", len(c.sendCh)))
+		c.logger.Debug("coordinator: queued notify", zap.Stringer("trace_id", traceID), zap.Int("queue_len", len(c.sendCh)))
 	default:
-		c.logger.Warn("coordinator: send queue full, dropping notify", zap.String("trace_id", traceID))
+		c.logger.Warn("coordinator: send queue full, dropping notify", zap.Stringer("trace_id", traceID))
 	}
 }
 
@@ -114,14 +115,12 @@ func (c *Client) connect() error {
 	for {
 		select {
 		case traceID := <-c.sendCh:
-			tid, _ := hex.DecodeString(traceID)
-			c.logger.Debug("coordinator: sending notify", zap.String("trace_id", traceID))
 			if err := stream.Send(&gen.ProcessorMessage{
 				Payload: &gen.ProcessorMessage_Notify{
-					Notify: &gen.NotifyInteresting{TraceId: tid},
+					Notify: &gen.NotifyInteresting{TraceId: traceID[:]},
 				},
 			}); err != nil {
-				c.logger.Error("coordinator: send failed", zap.String("trace_id", traceID), zap.Error(err))
+				c.logger.Error("coordinator: send failed", zap.Stringer("trace_id", traceID), zap.Error(err))
 				return err
 			}
 		case err := <-recvErr:

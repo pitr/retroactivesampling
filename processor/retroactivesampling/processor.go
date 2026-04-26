@@ -99,13 +99,13 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 	out := ptrace.NewTraces()
 	now := time.Now()
 	for tid, spans := range groupByTrace(td) {
-		if p.ic.Has(tid.String()) {
+		if p.ic.Has(tid) {
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
 		d, err := p.eval.Evaluate(spans)
 		if err != nil {
-			p.logger.Warn("policy evaluation error", zap.String("trace_id", tid.String()), zap.Error(err))
+			p.logger.Warn("policy evaluation error", zap.Stringer("trace_id", tid), zap.Error(err))
 		}
 		switch d {
 		case evaluator.Sampled:
@@ -118,11 +118,11 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		m := ptrace.ProtoMarshaler{}
 		data, err := m.MarshalTraces(spans)
 		if err != nil {
-			p.logger.Error("marshal spans for buffer, dropping", zap.String("trace_id", tid.String()), zap.Error(err))
+			p.logger.Error("marshal spans for buffer, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
 			continue
 		}
-		if err := p.buf.WriteWithEviction([16]byte(tid), data, now); err != nil {
-			p.logger.Error("could not store trace locally, dropping", zap.String("trace_id", tid.String()), zap.Error(err))
+		if err := p.buf.WriteWithEviction(tid, data, now); err != nil {
+			p.logger.Error("could not store trace locally, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
 			continue
 		}
 	}
@@ -133,16 +133,15 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 }
 
 func (p *retroactiveProcessor) ingestInteresting(tid pcommon.TraceID, current ptrace.Traces) {
-	tidStr := tid.String()
-	p.ic.Add(tidStr)
+	p.ic.Add(tid)
 	if p.coord != nil {
-		p.coord.Notify(tidStr)
+		p.coord.Notify(tid)
 	}
 	p.ingestTrace(tid, current)
 }
 
 func (p *retroactiveProcessor) ingestLocal(tid pcommon.TraceID, current ptrace.Traces) {
-	p.ic.Add(tid.String())
+	p.ic.Add(tid)
 	p.ingestTrace(tid, current)
 }
 
@@ -154,7 +153,7 @@ func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.T
 		for _, chunk := range bufs {
 			t, err := u.UnmarshalTraces(chunk)
 			if err != nil {
-				p.logger.Warn("unmarshal buffered trace", zap.String("trace_id", tid.String()), zap.Error(err))
+				p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", tid), zap.Error(err))
 				continue
 			}
 			t.ResourceSpans().MoveAndAppendTo(merged.ResourceSpans())
@@ -163,20 +162,20 @@ func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.T
 		current = merged
 	}
 	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("could not enrich interesting trace with spans from local disk", zap.String("trace_id", tid.String()), zap.Error(err))
+		p.logger.Error("could not enrich interesting trace with spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
 	}
 }
 
 func (p *retroactiveProcessor) onDecision(traceID string) {
 	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID))
-	var raw [16]byte
-	n, err := hex.Decode(raw[:], []byte(traceID))
+	var tid pcommon.TraceID
+	n, err := hex.Decode(tid[:], []byte(traceID))
 	if err != nil || n != 16 {
 		p.logger.Warn("coordinator decision: invalid trace ID", zap.String("trace_id", traceID), zap.Error(err))
 		return
 	}
-	p.ic.Add(traceID)
-	bufs, ok := p.buf.ReadAndDelete(raw)
+	p.ic.Add(tid)
+	bufs, ok := p.buf.ReadAndDelete(tid)
 	if !ok {
 		return
 	}

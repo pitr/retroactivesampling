@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/configgrpc"
 	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
@@ -89,7 +90,10 @@ func TestClientSendsNotification(t *testing.T) {
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond) // connection establishment
-	c.Notify(traceHex)
+	var tid pcommon.TraceID
+	_, err := hex.Decode(tid[:], []byte(traceHex))
+	require.NoError(t, err)
+	c.Notify(tid)
 	time.Sleep(100 * time.Millisecond)
 
 	srv.mu.Lock()

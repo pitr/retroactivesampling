@@ -3,23 +3,25 @@ package cache
 import (
 	"container/list"
 	"sync"
+
+	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
 type InterestCache struct {
 	mu      sync.Mutex
 	cap     int
-	entries map[string]*list.Element
+	entries map[pcommon.TraceID]*list.Element
 	lru     list.List
 }
 
 func New(capacity int) *InterestCache {
 	return &InterestCache{
 		cap:     capacity,
-		entries: make(map[string]*list.Element),
+		entries: make(map[pcommon.TraceID]*list.Element),
 	}
 }
 
-func (c *InterestCache) Add(traceID string) {
+func (c *InterestCache) Add(traceID pcommon.TraceID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if el, ok := c.entries[traceID]; ok {
@@ -31,11 +33,11 @@ func (c *InterestCache) Add(traceID string) {
 	if c.lru.Len() > c.cap {
 		back := c.lru.Back()
 		c.lru.Remove(back)
-		delete(c.entries, back.Value.(string))
+		delete(c.entries, back.Value.(pcommon.TraceID))
 	}
 }
 
-func (c *InterestCache) Has(traceID string) bool {
+func (c *InterestCache) Has(traceID pcommon.TraceID) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	el, ok := c.entries[traceID]
@@ -44,13 +46,4 @@ func (c *InterestCache) Has(traceID string) bool {
 	}
 	c.lru.MoveToFront(el)
 	return true
-}
-
-func (c *InterestCache) Delete(traceID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if el, ok := c.entries[traceID]; ok {
-		c.lru.Remove(el)
-		delete(c.entries, traceID)
-	}
 }
