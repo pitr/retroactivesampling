@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/hex"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -13,7 +12,7 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-type DecisionHandler func(traceID string)
+type DecisionHandler func(traceID pcommon.TraceID)
 
 type Client struct {
 	grpcCfg  configgrpc.ClientConfig
@@ -103,9 +102,14 @@ func (c *Client) connect() error {
 				return
 			}
 			if b := msg.GetBatch(); b != nil {
-				for _, raw := range b.TraceIds {
-					tid := hex.EncodeToString(raw)
-					c.logger.Debug("coordinator: received decision", zap.String("trace_id", tid))
+				for _, traceID := range b.TraceIds {
+					if len(traceID) != 16 {
+						c.logger.Warn("coordinator decision: invalid trace ID", zap.Binary("trace_id", traceID))
+						continue
+					}
+					var tid pcommon.TraceID
+					copy(tid[:], traceID)
+					c.logger.Debug("coordinator decision: received", zap.Stringer("trace_id", tid))
 					c.handler(tid)
 				}
 			}

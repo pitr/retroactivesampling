@@ -86,7 +86,7 @@ func insecureGRPCConfig(addr string) configgrpc.ClientConfig {
 func TestClientSendsNotification(t *testing.T) {
 	const traceHex = "aabbccdd99999999aabbccdd99999999"
 	srv, addr := startFakeServer(t)
-	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(string) {}, zap.NewNop())
+	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(pcommon.TraceID) {}, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond) // connection establishment
@@ -106,7 +106,7 @@ func TestClientReceivesDecision(t *testing.T) {
 	const traceHex = "aabbccdd55555555aabbccdd55555555"
 	srv, addr := startFakeServer(t)
 	received := make(chan string, 1)
-	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(traceID string) { received <- traceID }, zap.NewNop())
+	c := coord.New(insecureGRPCConfig(addr), componenttest.NewNopHost(), component.TelemetrySettings{}, func(traceID pcommon.TraceID) { received <- hex.EncodeToString(traceID[:]) }, zap.NewNop())
 	t.Cleanup(c.Close)
 
 	time.Sleep(100 * time.Millisecond)

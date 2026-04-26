@@ -2,7 +2,6 @@ package retroactivesampling
 
 import (
 	"context"
-	"encoding/hex"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -109,10 +108,12 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		}
 		switch d {
 		case evaluator.Sampled:
-			p.ingestInteresting(tid, spans)
+			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
+			p.recordInteresting(tid)
 			continue
 		case evaluator.SampledLocal:
-			p.ingestLocal(tid, spans)
+			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
+			p.recordLocal(tid)
 			continue
 		}
 		m := ptrace.ProtoMarshaler{}
@@ -131,64 +132,52 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 	return out, nil
 }
 
-func (p *retroactiveProcessor) ingestInteresting(tid pcommon.TraceID, current ptrace.Traces) {
+func (p *retroactiveProcessor) recordInteresting(tid pcommon.TraceID) {
 	p.ic.Add(tid)
 	if p.coord != nil {
 		p.coord.Notify(tid)
 	}
-	p.ingestTrace(tid, current)
+	p.hydrate(tid)
 }
 
-func (p *retroactiveProcessor) ingestLocal(tid pcommon.TraceID, current ptrace.Traces) {
+func (p *retroactiveProcessor) recordLocal(tid pcommon.TraceID) {
 	p.ic.Add(tid)
-	p.ingestTrace(tid, current)
+	p.hydrate(tid)
 }
 
-func (p *retroactiveProcessor) ingestTrace(tid pcommon.TraceID, current ptrace.Traces) {
-	bufs, ok := p.buf.ReadAndDelete([16]byte(tid))
+func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
+	bufs, ok := p.buf.ReadAndDelete(tid)
 	if ok {
 		u := ptrace.ProtoUnmarshaler{}
-		merged := ptrace.NewTraces()
 		for _, chunk := range bufs {
 			t, err := u.UnmarshalTraces(chunk)
 			if err != nil {
 				p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", tid), zap.Error(err))
 				continue
 			}
-			t.ResourceSpans().MoveAndAppendTo(merged.ResourceSpans())
+			if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
+				p.logger.Error("could not send spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
+			}
 		}
-		current.ResourceSpans().MoveAndAppendTo(merged.ResourceSpans())
-		current = merged
-	}
-	if err := p.next.ConsumeTraces(context.Background(), current); err != nil {
-		p.logger.Error("could not enrich interesting trace with spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
 	}
 }
 
-func (p *retroactiveProcessor) onDecision(traceID string) {
-	p.logger.Debug("coordinator decision received", zap.String("trace_id", traceID))
-	var tid pcommon.TraceID
-	n, err := hex.Decode(tid[:], []byte(traceID))
-	if err != nil || n != 16 {
-		p.logger.Warn("coordinator decision: invalid trace ID", zap.String("trace_id", traceID), zap.Error(err))
-		return
-	}
-	p.ic.Add(tid)
-	bufs, ok := p.buf.ReadAndDelete(tid)
+func (p *retroactiveProcessor) onDecision(traceID pcommon.TraceID) {
+	p.logger.Debug("coordinator decision received", zap.Stringer("trace_id", traceID))
+	p.ic.Add(traceID)
+	bufs, ok := p.buf.ReadAndDelete(traceID)
 	if !ok {
 		return
 	}
 	u := ptrace.ProtoUnmarshaler{}
-	traces := ptrace.NewTraces()
 	for _, chunk := range bufs {
 		t, err := u.UnmarshalTraces(chunk)
 		if err != nil {
-			p.logger.Warn("coordinator decision: unmarshal buffered trace", zap.String("trace_id", traceID), zap.Error(err))
+			p.logger.Warn("coordinator decision: unmarshal buffered trace", zap.Stringer("trace_id", traceID), zap.Error(err))
 			continue
 		}
-		t.ResourceSpans().MoveAndAppendTo(traces.ResourceSpans())
-	}
-	if err := p.next.ConsumeTraces(context.Background(), traces); err != nil {
-		p.logger.Error("ingest coordinator-decided trace", zap.String("trace_id", traceID), zap.Error(err))
+		if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
+			p.logger.Error("ingest coordinator-decided trace", zap.Stringer("trace_id", traceID), zap.Error(err))
+		}
 	}
 }
