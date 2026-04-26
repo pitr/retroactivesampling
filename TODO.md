@@ -2,7 +2,6 @@
 
 ## Small items
 
-- coordinator: server.go should have New and Start so we can pre-create server in main.go and pass it to pubsub, then start it
 - coordinator: server.go batches incoming requests until batch is full. Instead it should not wait forever
 - coordinator: proxy pubsub should use context for recv/send to stop running, not recvErr
 

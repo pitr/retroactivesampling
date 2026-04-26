@@ -6,22 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"google.golang.org/grpc"
 
 	"pitr.ca/retroactivesampling/coordinator/memory"
 	"pitr.ca/retroactivesampling/coordinator/proxy"
 	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
-	gen "pitr.ca/retroactivesampling/proto"
 )
 
 func fatal(msg string, args ...any) {
@@ -80,15 +76,28 @@ func main() {
 		}()
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
 	var ps PubSub
-	var srv *server.Server
+	srv := server.New(func(traceID []byte) {
+		if ctx.Err() != nil {
+			return
+		}
+		if novel, err := ps.Publish(ctx, traceID); err != nil {
+			slog.Error("publish", "trace_id", fmt.Sprintf("%x", traceID), "err", err)
+		} else if novel {
+			interestingTraces.Add(1)
+		}
+	}, bytesIn, bytesOut, droppedSends, sendErrors)
+
 	switch m := activeMode.(type) {
 	case *SingleConfig:
 		if m.DecidedKeyTTL == 0 {
 			fatal("single mode: decided_key_ttl is required")
 		}
 		slog.Info("running in single-node mode")
-		ps = memory.New(m.DecidedKeyTTL, func(id []byte) { srv.Broadcast(id) })
+		ps = memory.New(m.DecidedKeyTTL, srv.Broadcast)
 	case *DistributedConfig:
 		if m.DecidedKeyTTL == 0 {
 			fatal("distributed mode: decided_key_ttl is required")
@@ -102,7 +111,7 @@ func main() {
 			replicaCfg = &rc
 			slog.Info("subscribing to Redis replica", "addr", rc.Endpoint)
 		}
-		ps, err = redis.New(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL, func(id []byte) { srv.Broadcast(id) })
+		ps, err = redis.New(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL, srv.Broadcast)
 		if err != nil {
 			fatal("redis", "err", err)
 		}
@@ -111,7 +120,7 @@ func main() {
 			fatal("proxy mode: endpoint is required")
 		}
 		slog.Info("running in proxy mode", "endpoint", m.Endpoint)
-		ps, err = proxy.New(m.Endpoint, func(id []byte) { srv.Broadcast(id) })
+		ps, err = proxy.New(m.Endpoint, srv.Broadcast)
 		if err != nil {
 			fatal("proxy", "err", err)
 		}
@@ -119,53 +128,9 @@ func main() {
 		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	srv = server.New(func(traceID []byte) {
-		if ctx.Err() != nil {
-			return
-		}
-		if novel, err := ps.Publish(ctx, traceID); err != nil {
-			slog.Error("publish", "trace_id", fmt.Sprintf("%x", traceID), "err", err)
-		} else if novel {
-			interestingTraces.Add(1)
-		}
-	}, bytesIn, bytesOut, droppedSends, sendErrors)
-
-	lis, err := net.Listen("tcp", cfg.GRPCListen)
-	if err != nil {
-		fatal("listen", "err", err)
-	}
-	gs := grpc.NewServer()
-	gen.RegisterCoordinatorServer(gs, srv)
-
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutting down")
-		timeout := cfg.ShutdownTimeout
-		if timeout == 0 {
-			timeout = 10 * time.Second
-		}
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), timeout)
-		defer stopCancel()
-		done := make(chan struct{})
-		go func() {
-			gs.GracefulStop()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-stopCtx.Done():
-			slog.Warn("graceful stop timed out, forcing")
-			gs.Stop()
-		}
-		_ = ps.Close()
-		slog.Info("shutdown complete")
-	}()
-
-	slog.Info("coordinator listening", "addr", cfg.GRPCListen)
-	if err := gs.Serve(lis); err != nil {
+	if err := srv.Start(ctx, cfg.GRPCListen, cfg.ShutdownTimeout); err != nil {
 		fatal("serve", "err", err)
 	}
+	_ = ps.Close()
+	slog.Info("shutdown complete")
 }

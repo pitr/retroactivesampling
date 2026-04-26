@@ -1,11 +1,16 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"io"
+	"log/slog"
+	"net"
 	"sync"
+	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	gen "pitr.ca/retroactivesampling/proto"
@@ -124,6 +129,37 @@ func (s *Server) Broadcast(traceID []byte) {
 		}
 	}
 	s.mu.Unlock()
+}
+
+func (s *Server) Start(ctx context.Context, addr string, shutdownTimeout time.Duration) error {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	gs := grpc.NewServer()
+	gen.RegisterCoordinatorServer(gs, s)
+	go func() {
+		<-ctx.Done()
+		slog.Info("shutting down")
+		if shutdownTimeout == 0 {
+			shutdownTimeout = 10 * time.Second
+		}
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer stopCancel()
+		done := make(chan struct{})
+		go func() {
+			gs.GracefulStop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-stopCtx.Done():
+			slog.Warn("graceful stop timed out, forcing")
+			gs.Stop()
+		}
+	}()
+	slog.Info("coordinator listening", "addr", addr)
+	return gs.Serve(lis)
 }
 
 func randomID() string {
