@@ -21,7 +21,6 @@ type PubSub struct {
 	handler     func([]byte)
 	ctx         context.Context
 	cancel      context.CancelFunc
-	done        chan struct{}
 }
 
 func New(writeCfg Config, readCfg *Config, ttl time.Duration, handler func([]byte)) (*PubSub, error) {
@@ -48,9 +47,8 @@ func New(writeCfg Config, readCfg *Config, ttl time.Duration, handler func([]byt
 		handler:     handler,
 		ctx:         ctx,
 		cancel:      cancel,
-		done:        make(chan struct{}),
 	}
-	go func() { defer close(p.done); p.receive() }()
+	go p.receive()
 	return p, nil
 }
 
@@ -59,8 +57,7 @@ func New(writeCfg Config, readCfg *Config, ttl time.Duration, handler func([]byt
 // causes silent trace loss — the NX key blocks retries but no broadcast is sent.
 // For this system's best-effort semantics this is acceptable.
 func (p *PubSub) Publish(ctx context.Context, traceID []byte) (bool, error) {
-	key := fmt.Sprintf(decidedKeyFmt, traceID)
-	result, err := p.writeClient.SetArgs(ctx, key, 1, redis.SetArgs{TTL: p.ttl, Mode: "NX"}).Result()
+	result, err := p.writeClient.SetArgs(ctx, fmt.Sprintf(decidedKeyFmt, traceID), 1, redis.SetArgs{TTL: p.ttl, Mode: "NX"}).Result()
 	if errors.Is(err, redis.Nil) {
 		return false, nil
 	}
@@ -79,7 +76,7 @@ func (p *PubSub) receive() {
 	for {
 		select {
 		case msg := <-sub.Channel():
-			if msg != nil && p.handler != nil {
+			if msg != nil {
 				p.handler([]byte(msg.Payload))
 			}
 		case <-p.ctx.Done():
@@ -90,12 +87,9 @@ func (p *PubSub) receive() {
 
 func (p *PubSub) Close() error {
 	p.cancel()
-	<-p.done
 	err := p.writeClient.Close()
 	if p.readClient != p.writeClient {
-		if e := p.readClient.Close(); e != nil && err == nil {
-			err = e
-		}
+		err = errors.Join(err, p.readClient.Close())
 	}
 	return err
 }

@@ -80,7 +80,8 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := proxy.New(addr, nil)
+	ps, err := proxy.New(addr, func([]byte) {})
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	novel, err := ps.Publish(t.Context(), traceBytes)
@@ -99,7 +100,8 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := proxy.New(addr, nil)
+	ps, err := proxy.New(addr, func([]byte) {})
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	for range 3 {
@@ -114,7 +116,8 @@ func TestHandlerFiredOnDecision(t *testing.T) {
 	addr := startGRPCServer(t, mock)
 
 	received := make(chan []byte, 1)
-	ps := proxy.New(addr, func(id []byte) { received <- id })
+	ps, err := proxy.New(addr, func(id []byte) { received <- id })
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	select {
@@ -139,7 +142,8 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close()
 
-	ps := proxy.New(addr, nil)
+	ps, err := proxy.New(addr, func([]byte) {})
+	require.NoError(t, err)
 	done := make(chan struct{})
 	go func() { _ = ps.Close(); close(done) }()
 
@@ -150,20 +154,3 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	}
 }
 
-func TestHandlerNilSafe(t *testing.T) {
-	mock := newMock()
-	addr := startGRPCServer(t, mock)
-
-	ps := proxy.New(addr, nil)
-	t.Cleanup(func() { _ = ps.Close() })
-
-	select {
-	case <-mock.connected:
-	case <-time.After(3 * time.Second):
-		t.Fatal("proxy connection not established")
-	}
-
-	mock.decisionCh <- traceBytes
-	time.Sleep(100 * time.Millisecond)
-	// if we reach here without panic, test passes
-}

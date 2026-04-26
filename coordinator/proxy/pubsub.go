@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"google.golang.org/grpc"
@@ -24,26 +23,23 @@ type PubSub struct {
 	handler func([]byte)
 	ctx     context.Context
 	cancel  context.CancelFunc
-	done    chan struct{}
 }
 
-func New(endpoint string, handler func([]byte)) *PubSub {
-	ctx, cancel := context.WithCancel(context.Background())
+func New(endpoint string, handler func([]byte)) (*PubSub, error) {
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		slog.Error("proxy: new client", "endpoint", endpoint, "err", err)
-		os.Exit(1)
+		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	p := &PubSub{
 		conn:    conn,
 		sendCh:  make(chan []byte, sendBufSize),
 		handler: handler,
 		ctx:     ctx,
 		cancel:  cancel,
-		done:    make(chan struct{}),
 	}
-	go func() { defer close(p.done); p.run() }()
-	return p
+	go p.run()
+	return p, nil
 }
 
 // Always returns (false, nil) — no local dedup; novel count is tracked by the parent coordinator.
@@ -58,7 +54,6 @@ func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
 
 func (p *PubSub) Close() error {
 	p.cancel()
-	<-p.done
 	return p.conn.Close()
 }
 
@@ -70,7 +65,7 @@ func (p *PubSub) run() {
 			return
 		default:
 		}
-		stream, err := gen.NewCoordinatorClient(p.conn).Connect(p.ctx)
+		client, err := gen.NewCoordinatorClient(p.conn).Connect(p.ctx)
 		if err != nil {
 			slog.Warn("proxy: connect failed, retrying", "backoff", backoff, "err", err)
 			select {
@@ -82,8 +77,8 @@ func (p *PubSub) run() {
 			continue
 		}
 		recvErr := make(chan error, 1)
-		go p.recv(stream, recvErr)
-		if err := p.send(stream, recvErr); err != nil {
+		go p.recv(client, recvErr)
+		if err := p.send(client, recvErr); err != nil {
 			slog.Warn("proxy: connection lost, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
@@ -97,14 +92,14 @@ func (p *PubSub) run() {
 	}
 }
 
-func (p *PubSub) recv(stream gen.Coordinator_ConnectClient, errCh chan<- error) {
+func (p *PubSub) recv(client gen.Coordinator_ConnectClient, errCh chan<- error) {
 	for {
-		msg, err := stream.Recv()
+		msg, err := client.Recv()
 		if err != nil {
 			errCh <- err
 			return
 		}
-		if b := msg.GetBatch(); b != nil && p.handler != nil {
+		if b := msg.GetBatch(); b != nil {
 			for _, traceID := range b.TraceIds {
 				p.handler(traceID)
 			}
@@ -112,11 +107,11 @@ func (p *PubSub) recv(stream gen.Coordinator_ConnectClient, errCh chan<- error) 
 	}
 }
 
-func (p *PubSub) send(stream gen.Coordinator_ConnectClient, recvErr <-chan error) error {
+func (p *PubSub) send(client gen.Coordinator_ConnectClient, recvErr <-chan error) error {
 	for {
 		select {
 		case traceID := <-p.sendCh:
-			if err := stream.Send(&gen.ProcessorMessage{
+			if err := client.Send(&gen.ProcessorMessage{
 				Payload: &gen.ProcessorMessage_Notify{
 					Notify: &gen.NotifyInteresting{TraceId: traceID},
 				},

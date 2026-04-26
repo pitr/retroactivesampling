@@ -14,14 +14,14 @@ import (
 )
 
 func TestPublishNovel(t *testing.T) {
-	ps := memory.New(time.Minute, nil)
+	ps := memory.New(time.Minute, func([]byte) {})
 	novel, err := ps.Publish(t.Context(), []byte("trace1"))
 	require.NoError(t, err)
 	assert.True(t, novel)
 }
 
 func TestPublishDuplicate(t *testing.T) {
-	ps := memory.New(time.Minute, nil)
+	ps := memory.New(time.Minute, func([]byte) {})
 	ctx := t.Context()
 	_, _ = ps.Publish(ctx, []byte("trace1"))
 	novel, err := ps.Publish(ctx, []byte("trace1"))
@@ -56,7 +56,7 @@ func TestPublishDuplicateDoesNotCallHandler(t *testing.T) {
 }
 
 func TestTTLExpiry(t *testing.T) {
-	ps := memory.New(100*time.Millisecond, nil)
+	ps := memory.New(100*time.Millisecond, func([]byte) {})
 	ctx := t.Context()
 
 	novel, _ := ps.Publish(ctx, []byte("traceX"))
@@ -69,7 +69,7 @@ func TestTTLExpiry(t *testing.T) {
 }
 
 func TestConcurrentPublish(t *testing.T) {
-	ps := memory.New(time.Minute, nil)
+	ps := memory.New(time.Minute, func([]byte) {})
 	ctx := context.Background()
 
 	var wg sync.WaitGroup

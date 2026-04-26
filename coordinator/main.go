@@ -18,9 +18,9 @@ import (
 	"google.golang.org/grpc"
 
 	"pitr.ca/retroactivesampling/coordinator/memory"
+	"pitr.ca/retroactivesampling/coordinator/proxy"
 	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/server"
-	"pitr.ca/retroactivesampling/coordinator/proxy"
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
@@ -111,7 +111,10 @@ func main() {
 			fatal("proxy mode: endpoint is required")
 		}
 		slog.Info("running in proxy mode", "endpoint", m.Endpoint)
-		ps = proxy.New(m.Endpoint, func(id []byte) { srv.Broadcast(id) })
+		ps, err = proxy.New(m.Endpoint, func(id []byte) { srv.Broadcast(id) })
+		if err != nil {
+			fatal("proxy", "err", err)
+		}
 	default:
 		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}

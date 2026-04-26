@@ -27,7 +27,8 @@ func TestIntegrationLocalToCentral(t *testing.T) {
 
 	// Local coordinator: proxy PubSub pointing at central.
 	var localSrv *server.Server
-	localPS := proxy.New(centralAddr, func(id []byte) { localSrv.Broadcast(id) })
+	localPS, err := proxy.New(centralAddr, func(id []byte) { localSrv.Broadcast(id) })
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = localPS.Close() })
 	localSrv = server.New(func(traceID []byte) {
 		_, _ = localPS.Publish(t.Context(), traceID)

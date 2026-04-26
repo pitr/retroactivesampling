@@ -23,9 +23,7 @@ func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
 	if p.cache.Add(string(traceID), struct{}{}, gocache.DefaultExpiration) != nil {
 		return false, nil
 	}
-	if p.handler != nil {
-		p.handler(traceID)
-	}
+	p.handler(traceID)
 	return true, nil
 }
 

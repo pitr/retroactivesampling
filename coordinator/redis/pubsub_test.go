@@ -67,7 +67,7 @@ func TestPublishSubscribe(t *testing.T) {
 
 func TestPublishDeduplication(t *testing.T) {
 	addr := startRedis(t)
-	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second, nil)
+	ps, err := rds.New(rds.Config{Endpoint: addr}, nil, 60*time.Second, func([]byte) {})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
