@@ -146,22 +146,20 @@ func (p *retroactiveProcessor) recordLocal(tid pcommon.TraceID) {
 }
 
 func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
-	bufs, ok, err := p.buf.ReadAndDelete(tid)
+	bufs, err := p.buf.ReadAndDelete(tid)
 	if err != nil {
 		p.logger.Error("read buffer", zap.Stringer("trace_id", tid), zap.Error(err))
 		return
 	}
-	if ok {
-		u := ptrace.ProtoUnmarshaler{}
-		for _, chunk := range bufs {
-			t, err := u.UnmarshalTraces(chunk)
-			if err != nil {
-				p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", tid), zap.Error(err))
-				continue
-			}
-			if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
-				p.logger.Error("could not send spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
-			}
+	u := ptrace.ProtoUnmarshaler{}
+	for _, chunk := range bufs {
+		t, err := u.UnmarshalTraces(chunk)
+		if err != nil {
+			p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", tid), zap.Error(err))
+			continue
+		}
+		if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
+			p.logger.Error("could not send spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
 		}
 	}
 }
@@ -169,12 +167,9 @@ func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
 func (p *retroactiveProcessor) onDecision(traceID pcommon.TraceID) {
 	p.logger.Debug("coordinator decision received", zap.Stringer("trace_id", traceID))
 	p.ic.Add(traceID)
-	bufs, ok, err := p.buf.ReadAndDelete(traceID)
+	bufs, err := p.buf.ReadAndDelete(traceID)
 	if err != nil {
 		p.logger.Error("read buffer", zap.Stringer("trace_id", traceID), zap.Error(err))
-		return
-	}
-	if !ok {
 		return
 	}
 	u := ptrace.ProtoUnmarshaler{}

@@ -66,6 +66,6 @@ func BenchmarkRead(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for _, tid := range traceIDs {
-		_, _, _ = buf.ReadAndDelete(tid)
+		_, _ = buf.ReadAndDelete(tid)
 	}
 }

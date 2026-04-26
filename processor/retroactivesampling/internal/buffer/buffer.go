@@ -168,26 +168,26 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) error {
 	return nil
 }
 
-func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool, error) {
+func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	deltas := b.entries[traceID]
 	if len(deltas) == 0 {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	result := make([][]byte, 0, len(deltas))
 	for _, d := range deltas {
 		chunk := make([]byte, d.size)
 		if _, err := b.f.ReadAt(chunk, int64(d.offset+hdrSize)); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		result = append(result, chunk)
 		b.liveBytes -= uint64(hdrSize) + uint64(d.size)
 	}
 	delete(b.entries, traceID)
-	return result, true, nil
+	return result, nil
 }
 
 func (b *SpanBuffer) LiveBytes() int64 {

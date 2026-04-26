@@ -49,9 +49,9 @@ func marshalT(t *testing.T, tr ptrace.Traces) []byte {
 
 func readSpans(t *testing.T, buf *buffer.SpanBuffer, id [16]byte) (ptrace.Traces, bool) {
 	t.Helper()
-	chunks, ok, err := buf.ReadAndDelete(id)
+	chunks, err := buf.ReadAndDelete(id)
 	require.NoError(t, err)
-	if !ok {
+	if len(chunks) == 0 {
 		return ptrace.Traces{}, false
 	}
 	result := ptrace.NewTraces()
@@ -105,10 +105,10 @@ func TestEviction(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceA, marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)), now))
 	require.NoError(t, buf.WriteWithEviction(traceB, marshalT(t, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100)), now.Add(time.Millisecond)))
 
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	assert.False(t, ok, "traceA should be evicted")
-	_, ok, _ = buf.ReadAndDelete(traceB)
-	assert.True(t, ok, "traceB should be present")
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks, "traceA should be evicted")
+	chunks, _ = buf.ReadAndDelete(traceB)
+	assert.NotEmpty(t, chunks, "traceB should be present")
 }
 
 func TestPartialDeltaEviction(t *testing.T) {
@@ -146,8 +146,8 @@ func TestWrap(t *testing.T) {
 	require.NoError(t, buf.WriteWithEviction(traceB, marshalT(t, singleSpanTraces(traceB, ptrace.StatusCodeOk, 100)), now.Add(time.Millisecond)))
 	require.NoError(t, buf.WriteWithEviction(traceC, marshalT(t, singleSpanTraces(traceC, ptrace.StatusCodeOk, 100)), now.Add(2*time.Millisecond)))
 
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	assert.False(t, ok, "traceA should be evicted after wrap")
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks, "traceA should be evicted after wrap")
 
 	got, ok := readSpans(t, buf, traceB)
 	require.True(t, ok)
@@ -189,8 +189,8 @@ func TestWrapWithSkipRecord(t *testing.T) {
 	// The skip/pad record at the tail is orphaned (never indexed).
 	assert.Greater(t, buf.OrphanedBytes(), int64(0), "pad record bytes are orphaned immediately")
 
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	assert.False(t, ok, "traceA should be evicted after wrap with skip record")
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks, "traceA should be evicted after wrap with skip record")
 
 	got, ok := readSpans(t, buf, traceC)
 	require.True(t, ok)
@@ -207,14 +207,14 @@ func TestReadAndDelete(t *testing.T) {
 	assert.Equal(t, 1, got.SpanCount())
 
 	// Second call: entry gone.
-	_, ok, _ = buf.ReadAndDelete(traceA)
-	assert.False(t, ok)
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks)
 }
 
 func TestReadAndDeleteMissing(t *testing.T) {
 	buf := newBuf(t)
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	assert.False(t, ok)
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks)
 }
 
 func TestReadAndDeleteMultipleDeltas(t *testing.T) {
@@ -230,8 +230,8 @@ func TestReadAndDeleteMultipleDeltas(t *testing.T) {
 	assert.Equal(t, int64(0), buf.LiveBytes(), "both deltas removed from live index")
 	assert.Greater(t, buf.OrphanedBytes(), int64(0), "bytes remain in ring until swept")
 
-	_, ok, _ = buf.ReadAndDelete(traceA)
-	assert.False(t, ok)
+	chunks, _ := buf.ReadAndDelete(traceA)
+	assert.Empty(t, chunks)
 }
 
 func TestLiveBytesAndOrphanedBytes(t *testing.T) {
@@ -246,8 +246,8 @@ func TestLiveBytesAndOrphanedBytes(t *testing.T) {
 	assert.Equal(t, rs, buf.LiveBytes())
 	assert.Equal(t, int64(0), buf.OrphanedBytes())
 
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	require.True(t, ok)
+	chunks, _ := buf.ReadAndDelete(traceA)
+	require.NotEmpty(t, chunks)
 	assert.Equal(t, int64(0), buf.LiveBytes())
 	assert.Equal(t, rs, buf.OrphanedBytes())
 }
@@ -274,8 +274,8 @@ func TestOrphanedBytesDecreasedAfterSweep(t *testing.T) {
 	now := time.Now()
 	require.NoError(t, buf.WriteWithEviction(traceA, marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100)), now))
 
-	_, ok, _ := buf.ReadAndDelete(traceA)
-	require.True(t, ok)
+	chunks, _ := buf.ReadAndDelete(traceA)
+	require.NotEmpty(t, chunks)
 
 	orphanedBefore := buf.OrphanedBytes()
 	assert.Equal(t, rs, orphanedBefore, "orphaned bytes should equal the evicted record")
