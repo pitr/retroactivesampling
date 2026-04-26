@@ -2,9 +2,8 @@
 
 ## Small items
 
-- [ ] buffer.go should use uint64 more instead of ints
-- [ ] remove madvise in buffer.go and compare benchmarks
 - [ ] MoveAndAppendTo in processor are expensive, ingest traces as they are
+- [ ] remove madvise in buffer.go and compare benchmarks
 
 ## Large items
 

@@ -18,23 +18,23 @@ const (
 
 var (
 	zeroID       [16]byte
-	mmapPageSize = int64(os.Getpagesize())
+	mmapPageSize = uint64(os.Getpagesize())
 )
 
 type deltaRecord struct {
-	offset int64
-	size   int32
+	offset uint64
+	size   uint32
 }
 
 type SpanBuffer struct {
-	maxBytes      int64
+	maxBytes      uint64
 	f             *os.File
 	data          []byte
-	wHead         int64
-	rHead         int64
-	used          int64
-	liveBytes     int64
-	lastMadvise   int64
+	wHead         uint64
+	rHead         uint64
+	used          uint64
+	liveBytes     uint64
+	lastMadvise   uint64
 	entries       map[[16]byte][]deltaRecord
 	evictObserver func(time.Duration)
 	mu            sync.Mutex
@@ -72,7 +72,7 @@ func New(file string, maxBytes int64, evictObserver func(time.Duration)) (*SpanB
 	}
 	_ = unix.Madvise(data, unix.MADV_SEQUENTIAL)
 	return &SpanBuffer{
-		maxBytes:      maxBytes,
+		maxBytes:      uint64(maxBytes),
 		f:             f,
 		data:          data,
 		entries:       make(map[[16]byte][]deltaRecord),
@@ -102,7 +102,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	recSize := int64(hdrSize + len(data))
+	recSize := uint64(hdrSize + len(data))
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
 	}
@@ -128,7 +128,7 @@ func (b *SpanBuffer) WriteWithEviction(traceID [16]byte, data []byte, insertedAt
 	binary.BigEndian.PutUint32(b.data[offset+24:], uint32(len(data)))
 	copy(b.data[offset+hdrSize:], data)
 
-	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, int32(len(data))})
+	b.entries[traceID] = append(b.entries[traceID], deltaRecord{offset, uint32(len(data))})
 	b.wHead += recSize
 	b.used += recSize
 	b.liveBytes += recSize
@@ -147,8 +147,8 @@ func (b *SpanBuffer) sweepOneLocked(now time.Time) {
 	}
 
 	hdr := b.data[b.rHead : b.rHead+hdrSize]
-	dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
-	recSize := int64(hdrSize) + dataLen
+	dataLen := uint64(binary.BigEndian.Uint32(hdr[24:28]))
+	recSize := uint64(hdrSize) + dataLen
 
 	if bytes.Equal(hdr[:16], zeroID[:]) {
 		b.used -= recSize
@@ -210,7 +210,7 @@ func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool) {
 		chunk := make([]byte, d.size)
 		copy(chunk, b.data[d.offset+hdrSize:])
 		result = append(result, chunk)
-		b.liveBytes -= int64(hdrSize) + int64(d.size)
+		b.liveBytes -= uint64(hdrSize) + uint64(d.size)
 	}
 	delete(b.entries, traceID)
 	return result, true
@@ -219,11 +219,11 @@ func (b *SpanBuffer) ReadAndDelete(traceID [16]byte) ([][]byte, bool) {
 func (b *SpanBuffer) LiveBytes() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.liveBytes
+	return int64(b.liveBytes)
 }
 
 func (b *SpanBuffer) OrphanedBytes() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.used - b.liveBytes
+	return int64(b.used - b.liveBytes)
 }
