@@ -1,7 +1,6 @@
 package proxy_test
 
 import (
-	"context"
 	"encoding/hex"
 	"net"
 	"sync"
@@ -16,9 +15,6 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-// mockServer implements gen.CoordinatorServer. notified receives traceID hex
-// strings for each NotifyInteresting received. decisionCh items are sent as
-// BatchTraceDecision to the connected client. connected is closed once.
 type mockServer struct {
 	gen.UnimplementedCoordinatorServer
 	notified   chan string
@@ -84,7 +80,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := proxy.New(addr)
+	ps := proxy.New(addr, nil)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	novel, err := ps.Publish(t.Context(), traceBytes)
@@ -103,7 +99,7 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := proxy.New(addr)
+	ps := proxy.New(addr, nil)
 	t.Cleanup(func() { _ = ps.Close() })
 
 	for range 3 {
@@ -113,20 +109,13 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	}
 }
 
-func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
+func TestHandlerFiredOnDecision(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps := proxy.New(addr)
-	t.Cleanup(func() { _ = ps.Close() })
-
 	received := make(chan []byte, 1)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	// Subscribe before waiting for connection — handler is registered synchronously inside
-	// Subscribe before it blocks, so by the time the gRPC stream is established the handler
-	// is guaranteed to be in place.
-	go func() { _ = ps.Subscribe(ctx, func(id []byte) { received <- id }) }()
+	ps := proxy.New(addr, func(id []byte) { received <- id })
+	t.Cleanup(func() { _ = ps.Close() })
 
 	select {
 	case <-mock.connected:
@@ -140,18 +129,17 @@ func TestSubscribeHandlerFiredOnDecision(t *testing.T) {
 	case id := <-received:
 		assert.Equal(t, traceBytes, id)
 	case <-time.After(3 * time.Second):
-		t.Fatal("timeout: Subscribe handler not called with decision")
+		t.Fatal("timeout: handler not called with decision")
 	}
 }
 
 func TestCloseStopsReconnectLoop(t *testing.T) {
-	// No server listening — PubSub will loop retrying. Close() must still return quickly.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := lis.Addr().String()
-	_ = lis.Close() // immediately release so nothing is listening
+	_ = lis.Close()
 
-	ps := proxy.New(addr)
+	ps := proxy.New(addr, nil)
 	done := make(chan struct{})
 	go func() { _ = ps.Close(); close(done) }()
 
@@ -160,4 +148,22 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Close() did not return in time")
 	}
+}
+
+func TestHandlerNilSafe(t *testing.T) {
+	mock := newMock()
+	addr := startGRPCServer(t, mock)
+
+	ps := proxy.New(addr, nil)
+	t.Cleanup(func() { _ = ps.Close() })
+
+	select {
+	case <-mock.connected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("proxy connection not established")
+	}
+
+	mock.decisionCh <- traceBytes
+	time.Sleep(100 * time.Millisecond)
+	// if we reach here without panic, test passes
 }

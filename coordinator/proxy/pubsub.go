@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -20,16 +19,15 @@ const (
 )
 
 type PubSub struct {
-	conn     *grpc.ClientConn
-	sendCh   chan []byte
-	mu       sync.RWMutex
-	handlers []func([]byte)
-	ctx      context.Context
-	cancel   context.CancelFunc
-	done     chan struct{}
+	conn    *grpc.ClientConn
+	sendCh  chan []byte
+	handler func([]byte)
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
-func New(endpoint string) *PubSub {
+func New(endpoint string, handler func([]byte)) *PubSub {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -37,11 +35,12 @@ func New(endpoint string) *PubSub {
 		os.Exit(1)
 	}
 	p := &PubSub{
-		conn:   conn,
-		sendCh: make(chan []byte, sendBufSize),
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		conn:    conn,
+		sendCh:  make(chan []byte, sendBufSize),
+		handler: handler,
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
 	}
 	go func() { defer close(p.done); p.run() }()
 	return p
@@ -55,15 +54,6 @@ func (p *PubSub) Publish(_ context.Context, traceID []byte) (bool, error) {
 		slog.Warn("proxy: send buffer full, dropping notify", "trace_id", fmt.Sprintf("%x", traceID))
 	}
 	return false, nil
-}
-
-// Call before meaningful decisions are expected from the parent to avoid a startup race.
-func (p *PubSub) Subscribe(ctx context.Context, handler func([]byte)) error {
-	p.mu.Lock()
-	p.handlers = append(p.handlers, handler)
-	p.mu.Unlock()
-	<-ctx.Done()
-	return nil
 }
 
 func (p *PubSub) Close() error {
@@ -114,14 +104,9 @@ func (p *PubSub) recv(stream gen.Coordinator_ConnectClient, errCh chan<- error) 
 			errCh <- err
 			return
 		}
-		if b := msg.GetBatch(); b != nil {
-			p.mu.RLock()
-			hs := p.handlers
-			p.mu.RUnlock()
-			for _, traceId := range b.TraceIds {
-				for _, h := range hs {
-					h(traceId)
-				}
+		if b := msg.GetBatch(); b != nil && p.handler != nil {
+			for _, traceID := range b.TraceIds {
+				p.handler(traceID)
 			}
 		}
 	}
