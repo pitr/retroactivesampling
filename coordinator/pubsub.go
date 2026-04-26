@@ -4,13 +4,12 @@ import (
 	"context"
 
 	"pitr.ca/retroactivesampling/coordinator/memory"
-	"pitr.ca/retroactivesampling/coordinator/redis"
 	"pitr.ca/retroactivesampling/coordinator/proxy"
+	"pitr.ca/retroactivesampling/coordinator/redis"
 )
 
 type PubSub interface {
 	Publish(ctx context.Context, traceID []byte) (bool, error)
-	Subscribe(ctx context.Context, handler func([]byte)) error
 	Close() error
 }
 

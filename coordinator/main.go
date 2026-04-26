@@ -81,13 +81,14 @@ func main() {
 	}
 
 	var ps PubSub
+	var srv *server.Server
 	switch m := activeMode.(type) {
 	case *SingleConfig:
 		if m.DecidedKeyTTL == 0 {
 			fatal("single mode: decided_key_ttl is required")
 		}
 		slog.Info("running in single-node mode")
-		ps = memory.New(m.DecidedKeyTTL)
+		ps = memory.New(m.DecidedKeyTTL, func(id []byte) { srv.Broadcast(id) })
 	case *DistributedConfig:
 		if m.DecidedKeyTTL == 0 {
 			fatal("distributed mode: decided_key_ttl is required")
@@ -101,7 +102,7 @@ func main() {
 			replicaCfg = &rc
 			slog.Info("subscribing to Redis replica", "addr", rc.Endpoint)
 		}
-		ps, err = redis.New(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL)
+		ps, err = redis.New(m.RedisPrimary, replicaCfg, m.DecidedKeyTTL, func(id []byte) { srv.Broadcast(id) })
 		if err != nil {
 			fatal("redis", "err", err)
 		}
@@ -110,7 +111,7 @@ func main() {
 			fatal("proxy mode: endpoint is required")
 		}
 		slog.Info("running in proxy mode", "endpoint", m.Endpoint)
-		ps = proxy.New(m.Endpoint)
+		ps = proxy.New(m.Endpoint, func(id []byte) { srv.Broadcast(id) })
 	default:
 		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}
@@ -118,7 +119,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	srv := server.New(func(traceID []byte) {
+	srv = server.New(func(traceID []byte) {
 		if ctx.Err() != nil {
 			return
 		}
@@ -128,14 +129,6 @@ func main() {
 			interestingTraces.Add(1)
 		}
 	}, bytesIn, bytesOut, droppedSends, sendErrors)
-
-	go func() {
-		if err := ps.Subscribe(ctx, func(traceID []byte) {
-			srv.Broadcast(traceID)
-		}); err != nil {
-			slog.Error("subscribe", "err", err)
-		}
-	}()
 
 	lis, err := net.Listen("tcp", cfg.GRPCListen)
 	if err != nil {
