@@ -65,8 +65,10 @@ func (p *PubSub) run() {
 			return
 		default:
 		}
-		client, err := gen.NewCoordinatorClient(p.conn).Connect(p.ctx)
+		connCtx, connCancel := context.WithCancel(p.ctx)
+		client, err := gen.NewCoordinatorClient(p.conn).Connect(connCtx)
 		if err != nil {
+			connCancel()
 			slog.Warn("proxy: connect failed, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
@@ -76,9 +78,9 @@ func (p *PubSub) run() {
 			}
 			continue
 		}
-		recvErr := make(chan error, 1)
-		go p.recv(client, recvErr)
-		if err := p.send(client, recvErr); err != nil {
+		go p.recv(client, connCancel)
+		if err := p.send(connCtx, client); err != nil {
+			connCancel()
 			slog.Warn("proxy: connection lost, retrying", "backoff", backoff, "err", err)
 			select {
 			case <-p.ctx.Done():
@@ -87,16 +89,17 @@ func (p *PubSub) run() {
 				backoff = min(backoff*2, maxBackoff)
 			}
 		} else {
+			connCancel()
 			backoff = time.Second
 		}
 	}
 }
 
-func (p *PubSub) recv(client gen.Coordinator_ConnectClient, errCh chan<- error) {
+func (p *PubSub) recv(client gen.Coordinator_ConnectClient, cancel context.CancelFunc) {
 	for {
 		msg, err := client.Recv()
 		if err != nil {
-			errCh <- err
+			cancel()
 			return
 		}
 		if b := msg.GetBatch(); b != nil {
@@ -107,7 +110,7 @@ func (p *PubSub) recv(client gen.Coordinator_ConnectClient, errCh chan<- error) 
 	}
 }
 
-func (p *PubSub) send(client gen.Coordinator_ConnectClient, recvErr <-chan error) error {
+func (p *PubSub) send(ctx context.Context, client gen.Coordinator_ConnectClient) error {
 	for {
 		select {
 		case traceID := <-p.sendCh:
@@ -118,10 +121,11 @@ func (p *PubSub) send(client gen.Coordinator_ConnectClient, recvErr <-chan error
 			}); err != nil {
 				return err
 			}
-		case err := <-recvErr:
-			return err
-		case <-p.ctx.Done():
-			return nil
+		case <-ctx.Done():
+			if p.ctx.Err() != nil {
+				return nil
+			}
+			return ctx.Err()
 		}
 	}
 }

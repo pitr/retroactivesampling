@@ -16,7 +16,10 @@ import (
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
-const maxBatchSize = 256
+const (
+	maxBatchSize      = 256
+	batchFlushTimeout = 5 * time.Millisecond
+)
 
 type Counter interface{ Add(float64) }
 
@@ -64,20 +67,30 @@ func (s *Server) Connect(stream gen.Coordinator_ConnectServer) error {
 		close(done)
 	}()
 
+	flush := time.NewTimer(batchFlushTimeout)
+	flush.Stop()
 	go func() {
 		for {
 			select {
 			case tid := <-entry.ch:
 				ids := [][]byte{tid}
+				flush.Reset(batchFlushTimeout)
 			drain:
 				for len(ids) < maxBatchSize {
 					select {
 					case tid := <-entry.ch:
 						ids = append(ids, tid)
-					default:
+					case <-flush.C:
 						break drain
+					case <-done:
+						flush.Stop()
+						if n := len(entry.ch); n > 0 && s.droppedSends != nil {
+							s.droppedSends.Add(float64(n))
+						}
+						return
 					}
 				}
+				flush.Stop()
 				msg := &gen.CoordinatorMessage{
 					Payload: &gen.CoordinatorMessage_Batch{
 						Batch: &gen.BatchTraceDecision{TraceIds: ids},
