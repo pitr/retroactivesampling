@@ -37,11 +37,10 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	if err != nil {
 		return nil, err
 	}
-	obs := func(d time.Duration) {
-		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
-	}
 	ic := cache.New(cfg.MaxInterestCacheEntries)
-	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes, obs)
+	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes, func(d time.Duration) {
+		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
+	})
 	if err != nil {
 		tb.Shutdown()
 		return nil, err
