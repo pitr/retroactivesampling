@@ -158,6 +158,10 @@ policies:
         - 'name != "ignored_event"'
 ```
 
+## Platform
+
+Linux and macOS only. Windows is not supported.
+
 ## Including in a custom collector
 
 Add to your `build.yaml`:

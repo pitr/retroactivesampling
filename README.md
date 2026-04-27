@@ -48,6 +48,7 @@ See [PERFORMANCE.md](PERFORMANCE.md) for detailed traffic formulas and scaling a
 
 ## Requirements
 
+- Linux or macOS (Windows not supported)
 - Redis
 - Coordinator service → [coordinator/README.md](coordinator/README.md)
 - `retroactive_sampling` processor built into your collector → [processor/retroactivesampling/README.md](processor/retroactivesampling/README.md)
