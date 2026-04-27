@@ -35,10 +35,9 @@ telemetry:
         async: true
 
     retroactive_sampling_buffer_span_age_on_eviction:
-      description: Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure
+      description: Age of span batches (in seconds) when evicted from the ring buffer due to pressure
       stability: development
-      unit: ms
+      unit: s
       enabled: true
       histogram:
         value_type: int
-        bucket_boundaries: [0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000]

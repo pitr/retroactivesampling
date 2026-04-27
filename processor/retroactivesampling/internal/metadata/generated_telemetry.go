@@ -116,9 +116,8 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	errs = errors.Join(errs, err)
 	builder.RetroactiveSamplingBufferSpanAgeOnEviction, err = builder.meter.Int64Histogram(
 		"otelcol_retroactive_sampling_buffer_span_age_on_eviction",
-		metric.WithDescription("Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure [Development]"),
-		metric.WithUnit("ms"),
-		metric.WithExplicitBucketBoundaries([]float64{0, 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 60000}...),
+		metric.WithDescription("Age of span batches (in seconds) when evicted from the ring buffer due to pressure [Development]"),
+		metric.WithUnit("s"),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

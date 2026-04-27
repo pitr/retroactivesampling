@@ -24,8 +24,8 @@ Bytes in ring buffer used accounting but no longer indexed (pending sweep)
 
 ### otelcol_retroactive_sampling_buffer_span_age_on_eviction
 
-Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure
+Age of span batches (in seconds) when evicted from the ring buffer due to pressure
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| ms | Histogram | Int | Development |
+| s | Histogram | Int | Development |

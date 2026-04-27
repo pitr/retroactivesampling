@@ -49,7 +49,7 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 		cfg.DecisionWaitTime,
 		p.onMatch,
 		func(d time.Duration) {
-			tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
+			tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), int64(d.Seconds()))
 		},
 	)
 	if err != nil {

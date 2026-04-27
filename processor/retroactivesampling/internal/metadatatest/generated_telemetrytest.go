@@ -52,8 +52,8 @@ func AssertEqualRetroactiveSamplingBufferOrphanedBytes(t *testing.T, tt *compone
 func AssertEqualRetroactiveSamplingBufferSpanAgeOnEviction(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.HistogramDataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
 		Name:        "otelcol_retroactive_sampling_buffer_span_age_on_eviction",
-		Description: "Age of span batches (in milliseconds) when evicted from the ring buffer due to pressure [Development]",
-		Unit:        "ms",
+		Description: "Age of span batches (in seconds) when evicted from the ring buffer due to pressure [Development]",
+		Unit:        "s",
 		Data: metricdata.Histogram[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			DataPoints:  dps,
