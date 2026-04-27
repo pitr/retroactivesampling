@@ -22,7 +22,7 @@ func TestStagingAmortizesFlush(t *testing.T) {
 	recSize := hdrSize + len(payload) // 28 + 100 = 128
 	maxRecordsInStage := 4096 / recSize
 
-	for i := 0; i < maxRecordsInStage; i++ {
+	for range maxRecordsInStage {
 		require.NoError(t, buf.Write(traceA, payload, time.Now()))
 	}
 
