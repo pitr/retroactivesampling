@@ -2,7 +2,8 @@
 
 ## Small items
 
-- coordinator: config should support env variables.
+- coordinator: config parsing should support env variables with dollar simbol
+- buffer or processor: prevent multiple copies of processor using the same file
 
 ## Large items
 

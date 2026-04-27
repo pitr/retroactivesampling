@@ -60,9 +60,12 @@ func BenchmarkRead(b *testing.B) {
 	delivered := make(chan struct{}, b.N)
 	onMatch := func(_ pcommon.TraceID, _ []byte) { delivered <- struct{}{} }
 
+	// Ring sized for all records plus enough headroom that DefaultStageCap fits
+	// (validation requires stageCap*2 <= maxBytes).
+	maxBytes := max(int64(b.N)*rs+rs, int64(buffer.DefaultStageCap)*2)
 	buf, err := buffer.New(
 		filepath.Join(b.TempDir(), "buf.ring"),
-		int64(b.N)*rs+rs,
+		maxBytes,
 		time.Hour,
 		buffer.DefaultStageCap,
 		onMatch,
