@@ -86,3 +86,72 @@ func BenchmarkRead(b *testing.B) {
 		<-delivered
 	}
 }
+
+// BenchmarkWriteConcurrent measures write throughput under contention.
+// 8 goroutines write to a ring sized so eviction is required.
+func BenchmarkWriteConcurrent(b *testing.B) {
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	require.NoError(b, err)
+
+	bufSize := int64(64 * 1024) // 64 KiB ring
+	buf := newBufB(b, bufSize)
+	now := time.Now().Add(-time.Second)
+
+	// Warm the ring near capacity.
+	rs := int64(28 + len(data))
+	for n := bufSize/rs - 4; n > 0; n-- {
+		require.NoError(b, buf.Write(traceA, data, now))
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = buf.Write(traceA, data, now)
+		}
+	})
+}
+
+// BenchmarkWriteWithDelivery measures write throughput with 5% interest rate.
+// Interesting records require sweeper handoff during eviction.
+func BenchmarkWriteWithDelivery(b *testing.B) {
+	m := ptrace.ProtoMarshaler{}
+	data, err := m.MarshalTraces(singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	require.NoError(b, err)
+	rs := int64(28 + len(data))
+
+	bufSize := int64(64 * 1024)
+	buf, err := buffer.New(
+		filepath.Join(b.TempDir(), "buf.ring"),
+		bufSize,
+		time.Hour,
+		buffer.DefaultStageCap,
+		func(_ pcommon.TraceID, _ []byte) {},
+		nil,
+	)
+	require.NoError(b, err)
+	b.Cleanup(func() { _ = buf.Close() })
+
+	now := time.Now().Add(-time.Second)
+
+	// Pre-fill near capacity.
+	for n := bufSize/rs - 4; n > 0; n-- {
+		require.NoError(b, buf.Write(traceA, data, now))
+	}
+
+	// Mark every 20th trace ID interesting (5%).
+	for i := range 64 {
+		var tid pcommon.TraceID
+		binary.BigEndian.PutUint64(tid[8:], uint64(i*20+1))
+		buf.AddInterest(tid)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; b.Loop(); i++ {
+		var tid pcommon.TraceID
+		binary.BigEndian.PutUint64(tid[8:], uint64(i+1))
+		_ = buf.Write(tid, data, now)
+	}
+}

@@ -300,22 +300,22 @@ func (b *SpanBuffer) flushLocked(wrap bool) error {
 		b.flushDone.Broadcast()
 	}()
 
-	// Wrap padding: append a skip-record header so the on-disk write tiles
-	// the remaining tail space exactly.
+	// Wrap padding: write a skip-record header so the sweeper skips the tail
+	// gap on read. Only the hdrSize header bytes are appended to stage; the
+	// sweeper uses dataLen to advance past the remaining gap bytes without
+	// reading them, so they need not be in stage.
 	if wrap {
 		gap := b.maxBytes - b.wHead - int64(len(b.stage))
 		if gap >= hdrSize {
 			off := len(b.stage)
-			padTotal := int(gap)
-			b.stage = b.stage[:off+padTotal]
+			b.stage = b.stage[:off+hdrSize]
 			pad := b.stage[off : off+hdrSize]
 			for i := range pad[:16] {
 				pad[i] = 0
 			}
 			binary.BigEndian.PutUint64(pad[16:24], 0)
-			binary.BigEndian.PutUint32(pad[24:28], uint32(padTotal-hdrSize))
-			// pad bytes after the header are not zeroed; sweeper skips them via dataLen.
-			b.used += int64(padTotal)
+			binary.BigEndian.PutUint32(pad[24:28], uint32(gap-hdrSize))
+			b.used += gap
 		} else if gap > 0 {
 			// Tail gap < hdrSize: leave it; sweeper's tail-gap rule advances rHead past it.
 			b.used += gap
