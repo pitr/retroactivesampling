@@ -23,9 +23,9 @@ type Config struct {
 }
 
 type ModeConfig struct {
-	Single      *SingleConfig       `yaml:"single"`
-	Distributed *DistributedConfig  `yaml:"distributed"`
-	Proxy       *proxy.ClientConfig `yaml:"proxy"`
+	Single *SingleConfig       `yaml:"single"`
+	Redis  *RedisConfig        `yaml:"distributed"`
+	Proxy  *proxy.ClientConfig `yaml:"proxy"`
 }
 
 func (m ModeConfig) active() (any, error) {
@@ -35,9 +35,9 @@ func (m ModeConfig) active() (any, error) {
 		n++
 		result = m.Single
 	}
-	if m.Distributed != nil {
+	if m.Redis != nil {
 		n++
-		result = m.Distributed
+		result = m.Redis
 	}
 	if m.Proxy != nil {
 		n++
@@ -53,7 +53,7 @@ type SingleConfig struct {
 	DecidedKeyTTL time.Duration `yaml:"decided_key_ttl"`
 }
 
-type DistributedConfig struct {
+type RedisConfig struct {
 	DecidedKeyTTL time.Duration  `yaml:"decided_key_ttl"`
 	RedisPrimary  redis.Config   `yaml:"redis_primary"`
 	RedisReplicas []redis.Config `yaml:"redis_replicas"`

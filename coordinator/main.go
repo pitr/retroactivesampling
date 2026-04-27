@@ -98,7 +98,7 @@ func main() {
 		}
 		slog.Info("running in single-node mode")
 		ps = memory.New(m.DecidedKeyTTL, srv.Broadcast)
-	case *DistributedConfig:
+	case *RedisConfig:
 		if m.DecidedKeyTTL == 0 {
 			fatal("distributed mode: decided_key_ttl is required")
 		}
