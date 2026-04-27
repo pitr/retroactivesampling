@@ -122,7 +122,7 @@ func New(
 		interestEntries: make(map[pcommon.TraceID]*list.Element),
 		onMatch:         onMatch,
 		evictObs:        evictObs,
-		stage:           make([]byte, 0, stageCap),
+		stage:           make([]byte, 0, 2*stageCap), // wrap padding can append up to stageCap extra bytes
 		stageCap:        stageCap,
 		scratch:         make([]byte, evictScanCap),
 		wakeC:           make(chan struct{}, 1),
@@ -168,9 +168,20 @@ func (b *SpanBuffer) hasInterestLocked(id pcommon.TraceID) bool {
 
 // AddInterest marks traceID for delivery; the sweeper will call onMatch when it
 // encounters records for this trace instead of discarding them.
+//
+// If the stage is non-empty, it is flushed before signalling the sweeper so
+// that records currently in stage become visible to delivery. Without this
+// flush, a freshly-written record could sit in stage indefinitely while the
+// sweeper, scanning only the on-disk region, finds nothing to deliver.
 func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 	b.mu.Lock()
 	b.addInterestLocked(traceID)
+	if len(b.stage) > 0 {
+		// Compute wrap based on current state; ignore flush errors here — they
+		// will surface on the next Write.
+		wrap := b.wHead+int64(len(b.stage)) > b.maxBytes
+		_ = b.flushLocked(wrap)
+	}
 	b.mu.Unlock()
 	select {
 	case b.wakeC <- struct{}{}:
@@ -186,12 +197,10 @@ func (b *SpanBuffer) HasInterest(traceID pcommon.TraceID) bool {
 	return ok
 }
 
-// Write appends a record to the ring. If the ring is full it blocks until the
-// sweeper frees space.
+// Write appends a record to the staging buffer. If the stage is full the
+// record is flushed to disk first; if the disk ring is full the writer
+// evicts records inline.
 func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time.Time) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	recSize := hdrSize + int64(len(data))
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
@@ -200,44 +209,149 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 		return fmt.Errorf("record size %d exceeds stage capacity %d", recSize, b.stageCap)
 	}
 
-	if b.wHead+recSize > b.maxBytes {
-		remaining := b.maxBytes - b.wHead
-		if remaining >= hdrSize {
-			var pad [hdrSize]byte
-			binary.BigEndian.PutUint32(pad[24:28], uint32(remaining-hdrSize))
-			if _, err := b.f.WriteAt(pad[:], b.wHead); err != nil {
-				return err
-			}
-		}
-		b.used += remaining
-		b.wHead = 0
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return fmt.Errorf("buffer closed")
 	}
 
-	for b.used+recSize > b.maxBytes {
-		if b.closed {
-			return fmt.Errorf("buffer closed")
+	// Flush if appending would cross the disk wrap boundary.
+	if b.wHead+int64(len(b.stage))+recSize > b.maxBytes {
+		if err := b.flushLocked(true); err != nil {
+			return err
 		}
-		select {
-		case b.wakeC <- struct{}{}:
-		default:
+	}
+
+	// Flush if stage is full.
+	if int64(len(b.stage))+recSize > int64(b.stageCap) {
+		if err := b.flushLocked(false); err != nil {
+			return err
 		}
+	}
+
+	if b.closed {
+		return fmt.Errorf("buffer closed")
+	}
+
+	// Append record to stage.
+	stageOff := len(b.stage)
+	b.stage = b.stage[:stageOff+int(recSize)]
+	hdr := b.stage[stageOff : stageOff+hdrSize]
+	copy(hdr[:16], traceID[:])
+	binary.BigEndian.PutUint64(hdr[16:24], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(hdr[24:28], uint32(len(data)))
+	copy(b.stage[stageOff+hdrSize:], data)
+	b.used += recSize
+
+	// If the just-written trace is already in the interest set (rare — production
+	// callers gate Write with HasInterest), flush so the sweeper can deliver it
+	// promptly.
+	if b.hasInterestLocked(traceID) {
+		_ = b.flushLocked(false)
+	}
+
+	return nil
+}
+
+// flushLocked drains the staging buffer to disk in a single Pwrite, evicting
+// records inline if the ring lacks space. If wrap=true the stage is padded
+// with a skip-record so that wHead lands exactly at maxBytes (then wraps to
+// 0). Caller holds b.mu.
+func (b *SpanBuffer) flushLocked(wrap bool) error {
+	for b.flushing && !b.closed {
 		b.flushDone.Wait()
 	}
 	if b.closed {
 		return fmt.Errorf("buffer closed")
 	}
+	if len(b.stage) == 0 {
+		if !wrap {
+			return nil
+		}
+		// Wrap requested but no records to flush: write a skip-record header
+		// directly at wHead so the sweeper skips the tail gap on read.
+		gap := b.maxBytes - b.wHead
+		if gap >= hdrSize {
+			var pad [hdrSize]byte
+			binary.BigEndian.PutUint32(pad[24:28], uint32(gap-hdrSize))
+			b.flushing = true
+			off := b.wHead
+			b.mu.Unlock()
+			_, err := unix.Pwrite(b.fd, pad[:], off)
+			b.mu.Lock()
+			b.flushing = false
+			b.flushDone.Broadcast()
+			if err != nil {
+				return err
+			}
+		}
+		b.used += gap
+		b.wHead = 0
+		select {
+		case b.wakeC <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+	b.flushing = true
+	defer func() {
+		b.flushing = false
+		b.flushDone.Broadcast()
+	}()
 
-	var hdr [hdrSize]byte
-	copy(hdr[:16], traceID[:])
-	binary.BigEndian.PutUint64(hdr[16:24], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(hdr[24:28], uint32(len(data)))
-	iovs := [2][]byte{hdr[:], data}
-	if _, err := unix.Pwritev(b.fd, iovs[:], b.wHead); err != nil {
+	// Wrap padding: append a skip-record header so the on-disk write tiles
+	// the remaining tail space exactly.
+	if wrap {
+		gap := b.maxBytes - b.wHead - int64(len(b.stage))
+		if gap >= hdrSize {
+			off := len(b.stage)
+			padTotal := int(gap)
+			b.stage = b.stage[:off+padTotal]
+			pad := b.stage[off : off+hdrSize]
+			for i := range pad[:16] {
+				pad[i] = 0
+			}
+			binary.BigEndian.PutUint64(pad[16:24], 0)
+			binary.BigEndian.PutUint32(pad[24:28], uint32(padTotal-hdrSize))
+			// pad bytes after the header are not zeroed; sweeper skips them via dataLen.
+			b.used += int64(padTotal)
+		} else if gap > 0 {
+			// Tail gap < hdrSize: leave it; sweeper's tail-gap rule advances rHead past it.
+			b.used += gap
+		}
+	}
+
+	flushLen := int64(len(b.stage))
+
+	// Ensure disk has flushLen bytes free at wHead.
+	if err := b.evictBatchedLocked(flushLen); err != nil {
 		return err
 	}
-	b.used += recSize
-	b.wHead += recSize
 
+	// Pwrite with the lock released.
+	off := b.wHead
+	buf := b.stage // safe: only this writer owns stage during flush
+	b.mu.Unlock()
+	n, err := unix.Pwrite(b.fd, buf, off)
+	b.mu.Lock()
+
+	if err != nil {
+		return err
+	}
+	if int64(n) != flushLen {
+		return fmt.Errorf("short pwrite: got %d, want %d", n, flushLen)
+	}
+
+	b.wHead += flushLen
+	if wrap {
+		// After wrap-flush wHead == maxBytes; reset to 0.
+		b.wHead = 0
+	} else if b.wHead == b.maxBytes {
+		b.wHead = 0
+	}
+	b.stage = b.stage[:0]
+	// Kick sweeper so newly-flushed records become visible for delivery.
 	select {
 	case b.wakeC <- struct{}{}:
 	default:
@@ -245,11 +359,114 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	return nil
 }
 
+// evictBatchedLocked frees `need` bytes at the disk wHead by advancing rHead
+// through uninteresting records. Interesting records are handed off to the
+// sweeper for delivery; the writer waits on flushDone until the sweeper
+// advances past them. Caller holds b.mu and owns the flush slot.
+func (b *SpanBuffer) evictBatchedLocked(need int64) error {
+	for {
+		// Free disk space = maxBytes - (used - len(stage)).
+		freeDisk := b.maxBytes - (b.used - int64(len(b.stage)))
+		if freeDisk >= need {
+			return nil
+		}
+
+		// Tail gap: fewer than hdrSize bytes before wrap. Skip to 0.
+		if b.rHead+hdrSize > b.maxBytes {
+			b.used -= b.maxBytes - b.rHead
+			b.rHead = 0
+			continue
+		}
+
+		// Batched read of headers starting at rHead. Performed under mu so
+		// the scratch contents stay consistent with rHead — sweeper can't
+		// advance rHead and rotate the ring around us mid-read.
+		readLen := evictScanCap
+		if remain := b.maxBytes - b.rHead; int64(readLen) > remain {
+			readLen = int(remain)
+		}
+		buf := b.scratch[:readLen]
+		n, err := b.f.ReadAt(buf, b.rHead)
+		if err != nil && n == 0 {
+			return err
+		}
+		buf = buf[:n]
+
+		// Walk records inside the buffer.
+		for pos := 0; pos+hdrSize <= len(buf); {
+			hdr := buf[pos : pos+hdrSize]
+			var tid pcommon.TraceID
+			copy(tid[:], hdr[:16])
+			dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
+			recSize := hdrSize + dataLen
+
+			// Skip-record (zero traceID): drop it.
+			if tid.IsEmpty() {
+				b.used -= recSize
+				b.rHead += recSize
+				if b.rHead >= b.maxBytes {
+					b.rHead = 0
+				}
+				pos += int(recSize)
+				freeDisk = b.maxBytes - (b.used - int64(len(b.stage)))
+				if freeDisk >= need {
+					return nil
+				}
+				continue
+			}
+
+			// Stop if record extends beyond the read window — re-read on next iteration.
+			if pos+int(recSize) > len(buf) {
+				break
+			}
+
+			if b.hasInterestLocked(tid) {
+				// Hand off to sweeper, wait for it to advance rHead past this record.
+				targetRHead := b.rHead + recSize
+				select {
+				case b.wakeC <- struct{}{}:
+				default:
+				}
+				for b.rHead < targetRHead && !b.closed {
+					b.flushDone.Wait()
+				}
+				if b.closed {
+					return fmt.Errorf("buffer closed")
+				}
+				// rHead advanced; re-evaluate from top of outer loop (geometry changed).
+				break
+			}
+
+			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
+			b.evictObs(time.Since(insertedAt))
+			b.used -= recSize
+			b.rHead += recSize
+			if b.rHead >= b.maxBytes {
+				b.rHead = 0
+				break // re-read at offset 0 next iteration
+			}
+			pos += int(recSize)
+
+			freeDisk = b.maxBytes - (b.used - int64(len(b.stage)))
+			if freeDisk >= need {
+				return nil
+			}
+		}
+	}
+}
+
 func (b *SpanBuffer) Close() error {
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
 		return fmt.Errorf("already closed")
+	}
+	// Flush any pending stage so sweeper can deliver outstanding interesting records.
+	if len(b.stage) > 0 {
+		// Flush without wrap consideration; if wrap is needed it'll happen here
+		// just like in Write. Compute the wrap flag once.
+		wrap := b.wHead+int64(len(b.stage)) > b.maxBytes
+		_ = b.flushLocked(wrap) // best-effort; ignore error to ensure Close progresses
 	}
 	b.closed = true
 	b.flushDone.Broadcast()
@@ -262,104 +479,100 @@ func (b *SpanBuffer) Close() error {
 func (b *SpanBuffer) runSweeper() {
 	defer close(b.sweeperDone)
 	for {
-		// Wait until there is data to process.
-		b.mu.Lock()
-		for b.used == 0 && !b.closed {
-			b.mu.Unlock()
-			select {
-			case <-b.wakeC:
-			case <-b.closeC:
+		select {
+		case <-b.wakeC:
+		case <-b.closeC:
+			return
+		}
+
+		// Drain pass: walk on-disk records, delivering interesting ones and
+		// dropping uninteresting ones. Each record is claimed (rHead advanced
+		// under mu) before we release mu for the user callback, so writer
+		// eviction cannot advance past us mid-delivery.
+		for {
+			b.mu.Lock()
+			if b.closed {
+				b.mu.Unlock()
 				return
 			}
-			b.mu.Lock()
-		}
-		if b.closed {
-			b.mu.Unlock()
-			return
-		}
-		rHead := b.rHead
-		b.mu.Unlock()
+			diskUsed := b.used - int64(len(b.stage))
+			if diskUsed <= 0 {
+				b.mu.Unlock()
+				break
+			}
+			rHead := b.rHead
 
-		// Tail gap: fewer than hdrSize bytes remain before the wrap boundary —
-		// no skip record was written because remaining < hdrSize. Skip to 0.
-		if rHead+hdrSize > b.maxBytes {
-			b.mu.Lock()
-			b.used -= b.maxBytes - rHead
-			b.rHead = 0
-			b.mu.Unlock()
-			b.flushDone.Broadcast()
-			continue
-		}
+			// Tail gap: fewer than hdrSize bytes before wrap. Skip to 0.
+			if rHead+hdrSize > b.maxBytes {
+				b.used -= b.maxBytes - rHead
+				b.rHead = 0
+				b.flushDone.Broadcast()
+				b.mu.Unlock()
+				continue
+			}
 
-		// Read header without holding the lock. rHead is only advanced by this
-		// goroutine, so the position is stable between the unlock above and the
-		// lock below.
-		var hdr [hdrSize]byte
-		if _, err := b.f.ReadAt(hdr[:], rHead); err != nil {
-			return
-		}
+			// Read header under mu.
+			var hdr [hdrSize]byte
+			if _, err := b.f.ReadAt(hdr[:], rHead); err != nil {
+				b.mu.Unlock()
+				return
+			}
+			var tid pcommon.TraceID
+			copy(tid[:], hdr[:16])
+			dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
+			recSize := hdrSize + dataLen
 
-		traceID := pcommon.TraceID(hdr[:16])
-		dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
-		recSize := hdrSize + dataLen
+			// Skip-record (zero traceID).
+			if tid.IsEmpty() {
+				b.used -= recSize
+				b.rHead += recSize
+				if b.rHead >= b.maxBytes {
+					b.rHead = 0
+				}
+				b.flushDone.Broadcast()
+				b.mu.Unlock()
+				continue
+			}
 
-		// Skip/pad record written at the wrap boundary (zero traceID).
-		if traceID.IsEmpty() {
-			b.mu.Lock()
+			interesting := b.hasInterestLocked(tid)
+
+			var pb *[]byte
+			if interesting {
+				pb = payloadPool.Get().(*[]byte)
+				if int64(cap(*pb)) < dataLen {
+					*pb = make([]byte, dataLen)
+				} else {
+					*pb = (*pb)[:dataLen]
+				}
+				// Read payload under mu. Writer cannot Pwrite to this offset
+				// concurrently because mu is held.
+				if _, err := b.f.ReadAt(*pb, rHead+hdrSize); err != nil {
+					if cap(*pb) <= maxPoolPayload {
+						payloadPool.Put(pb)
+					}
+					b.mu.Unlock()
+					return
+				}
+			}
+
+			// Claim the record: advance rHead and used under mu before
+			// releasing for the callback.
+			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 			b.used -= recSize
-			b.rHead = 0
-			b.mu.Unlock()
+			b.rHead += recSize
+			if b.rHead >= b.maxBytes {
+				b.rHead = 0
+			}
+			b.evictObs(time.Since(insertedAt))
 			b.flushDone.Broadcast()
-			continue
-		}
+			b.mu.Unlock()
 
-		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
-		age := time.Since(insertedAt)
-
-		// Check interest before the age gate: already-interesting records are
-		// delivered immediately regardless of decisionWait.
-		b.mu.Lock()
-		interesting := b.hasInterestLocked(traceID)
-		full := b.used+hdrSize >= b.maxBytes
-		b.mu.Unlock()
-
-		// Non-interesting records wait out decisionWait unless ring is full.
-		if !interesting && age < b.decisionWait && !full {
-			select {
-			case <-time.After(b.decisionWait - age):
-			case <-b.wakeC:
-			case <-b.closeC:
-				return
-			}
-			continue
-		}
-
-		b.mu.Lock()
-		if !interesting {
-			interesting = b.hasInterestLocked(traceID) // re-check: AddInterest may have fired during wait
-		}
-		b.used -= recSize
-		b.rHead += recSize
-		if b.rHead >= b.maxBytes {
-			b.rHead = 0
-		}
-		b.mu.Unlock()
-		b.flushDone.Broadcast()
-
-		if interesting {
-			pb := payloadPool.Get().(*[]byte)
-			if int64(cap(*pb)) < dataLen {
-				*pb = make([]byte, dataLen)
-			} else {
-				*pb = (*pb)[:dataLen]
-			}
-			if _, err := b.f.ReadAt(*pb, rHead+hdrSize); err == nil {
-				b.onMatch(traceID, *pb)
-			}
-			if cap(*pb) <= maxPoolPayload {
-				payloadPool.Put(pb)
+			if interesting {
+				b.onMatch(tid, *pb)
+				if cap(*pb) <= maxPoolPayload {
+					payloadPool.Put(pb)
+				}
 			}
 		}
-		b.evictObs(age)
 	}
 }

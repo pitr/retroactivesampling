@@ -193,8 +193,9 @@ func TestHasInterest(t *testing.T) {
 }
 
 // TestWrap: ring wraps correctly; records after wrap are delivered.
-// Interest must be registered before writing so the sweeper finds it in the
-// cache when it reaches the record.
+// AddInterest before Write triggers flush-on-interest in Write (Fix D),
+// ensuring the staged record reaches disk and the sweeper before the
+// test's deadline.
 func TestWrap(t *testing.T) {
 	col := newCollector()
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
@@ -221,8 +222,8 @@ func TestWrapWithSkipRecord(t *testing.T) {
 
 	require.NoError(t, buf.Write(traceA, data, time.Now().Add(-time.Second)))
 	require.NoError(t, buf.Write(traceB, data, time.Now().Add(-time.Second)))
-	require.NoError(t, buf.Write(traceC, data, time.Now().Add(-time.Second)))
 	buf.AddInterest(traceC)
+	require.NoError(t, buf.Write(traceC, data, time.Now().Add(-time.Second)))
 
 	chunks := col.waitFor(t, traceC, 1, 2*time.Second)
 	assert.Len(t, chunks, 1)
@@ -254,21 +255,26 @@ func TestWriteRejectsRecordLargerThanStageCap(t *testing.T) {
 }
 
 // TestEvictionUnderPressure: when ring is full the writer unblocks after sweep.
+// Uses an explicit one-record stageCap so every Write triggers a flush, making
+// the disk-full path observable in tests.
 func TestEvictionUnderPressure(t *testing.T) {
 	col := newCollector()
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
 	rs := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
-	buf := newBuf(t, 4*rs, 10*time.Second, col, nil)
 
-	// Fill ring with uninteresting writes pre-aged past decisionWait so the sweeper
-	// discards them immediately when it must make room.
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 4*rs, 10*time.Second, int(rs), col.onMatch, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	// Fill ring with uninteresting writes pre-aged past decisionWait so the
+	// writer's batched eviction can drop them when it must make room.
 	for range 4 {
 		require.NoError(t, buf.Write(traceA, data, time.Now().Add(-20*time.Second)))
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		// Next write must block until existing records are swept.
+		// Next write must block on eviction since the disk ring is full.
 		done <- buf.Write(traceB, data, time.Now())
 	}()
 
