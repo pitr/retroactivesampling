@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	"pitr.ca/retroactivesampling/coordinator/internal/testtls"
 	"pitr.ca/retroactivesampling/coordinator/proxy"
@@ -23,9 +24,18 @@ type mockServer struct {
 	decisionCh chan []byte
 	connected  chan struct{}
 	once       sync.Once
+	gotMD      chan metadata.MD
 }
 
 func (m *mockServer) Connect(stream gen.Coordinator_ConnectServer) error {
+	if m.gotMD != nil {
+		if md, ok := metadata.FromIncomingContext(stream.Context()); ok {
+			select {
+			case m.gotMD <- md:
+			default:
+			}
+		}
+	}
 	m.once.Do(func() { close(m.connected) })
 	go func() {
 		for {
@@ -60,6 +70,7 @@ func newMock() *mockServer {
 		notified:   make(chan string, 10),
 		decisionCh: make(chan []byte, 10),
 		connected:  make(chan struct{}),
+		gotMD:      make(chan metadata.MD, 1),
 	}
 }
 
@@ -197,5 +208,29 @@ func TestProxyMTLSRoundTrip(t *testing.T) {
 		assert.Equal(t, traceHex, id)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout: NotifyInteresting not received over TLS")
+	}
+}
+
+func TestProxyHeadersAttachedToStream(t *testing.T) {
+	mock := newMock()
+	addr := startGRPCServer(t, mock)
+
+	cfg := proxy.ClientConfig{
+		Endpoint: addr,
+		Headers: map[string]string{
+			"authorization": "Bearer test-token",
+			"x-tenant-id":   "tenant-42",
+		},
+	}
+	ps, err := proxy.New(cfg, func([]byte) {})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ps.Close() })
+
+	select {
+	case md := <-mock.gotMD:
+		assert.Equal(t, []string{"Bearer test-token"}, md.Get("authorization"))
+		assert.Equal(t, []string{"tenant-42"}, md.Get("x-tenant-id"))
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for stream metadata")
 	}
 }
