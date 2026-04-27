@@ -91,7 +91,7 @@ func newBuf(t *testing.T, maxBytes int64, decisionWait time.Duration, col *colle
 	}
 	stageCap := buffer.DefaultStageCap
 	if maxBytes < int64(stageCap)*2 {
-		stageCap = max(int(maxBytes/2), 28*2)
+		stageCap = max(int(maxBytes/2), 28*2) // 28 = hdrSize (unexported); minimum valid stageCap
 	}
 	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes, decisionWait, stageCap, onMatch, evictObs)
 	require.NoError(t, err)
@@ -229,8 +229,9 @@ func TestWrapWithSkipRecord(t *testing.T) {
 }
 
 func TestNewRejectsTinyStageCap(t *testing.T) {
-	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, buffer.DefaultStageCap, nil, nil)
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, buffer.DefaultStageCap, nil, nil)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
 	_, err = buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, 8, nil, nil)
 	assert.Error(t, err)
 }
