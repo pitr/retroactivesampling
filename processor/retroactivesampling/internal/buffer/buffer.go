@@ -17,6 +17,9 @@ import (
 const (
 	hdrSize        = 28      // traceID(16) + insertedAt(8) + dataLen(4)
 	maxPoolPayload = 1 << 16 // 64 KiB; larger slices are not returned to the pool
+
+	DefaultStageCap = 4096 // default in-memory staging buffer size
+	evictScanCap    = 4096 // batched header read window in evictBatchedLocked
 )
 
 // payloadPool recycles payload buffers. onMatch receives a slice from this pool;
@@ -60,6 +63,7 @@ func New(
 	file string,
 	maxBytes int64,
 	decisionWait time.Duration,
+	stageCap int,
 	onMatch func(pcommon.TraceID, []byte),
 	evictObs func(time.Duration),
 ) (*SpanBuffer, error) {
@@ -74,6 +78,12 @@ func New(
 	}
 	if maxBytes < hdrSize*2 {
 		return nil, fmt.Errorf("maxBytes must be at least %d, got %d", hdrSize*2, maxBytes)
+	}
+	if stageCap < hdrSize*2 {
+		return nil, fmt.Errorf("stageCap must be at least %d, got %d", hdrSize*2, stageCap)
+	}
+	if maxBytes >= hdrSize*4 && int64(stageCap)*2 > maxBytes {
+		return nil, fmt.Errorf("stageCap (%d) must be at most maxBytes/2 (%d)", stageCap, maxBytes/2)
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 		return nil, err

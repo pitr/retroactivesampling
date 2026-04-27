@@ -15,7 +15,7 @@ import (
 
 func newBufB(b *testing.B, maxBytes int64) *buffer.SpanBuffer {
 	b.Helper()
-	buf, err := buffer.New(filepath.Join(b.TempDir(), "buf.ring"), maxBytes, time.Hour, nil, nil)
+	buf, err := buffer.New(filepath.Join(b.TempDir(), "buf.ring"), maxBytes, time.Hour, buffer.DefaultStageCap, nil, nil)
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -64,6 +64,7 @@ func BenchmarkRead(b *testing.B) {
 		filepath.Join(b.TempDir(), "buf.ring"),
 		int64(b.N)*rs+rs,
 		time.Hour,
+		buffer.DefaultStageCap,
 		onMatch,
 		nil,
 	)

@@ -89,7 +89,14 @@ func newBuf(t *testing.T, maxBytes int64, decisionWait time.Duration, col *colle
 	if col != nil {
 		onMatch = col.onMatch
 	}
-	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes, decisionWait, onMatch, evictObs)
+	stageCap := buffer.DefaultStageCap
+	if maxBytes < int64(stageCap)*2 {
+		stageCap = int(maxBytes / 2)
+		if stageCap < 28*2 {
+			stageCap = 28 * 2
+		}
+	}
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes, decisionWait, stageCap, onMatch, evictObs)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 	return buf
@@ -97,18 +104,18 @@ func newBuf(t *testing.T, maxBytes int64, decisionWait time.Duration, col *colle
 
 func TestNewCreatesFileAtPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spans.ring")
-	buf, err := buffer.New(path, 1<<20, time.Second, nil, nil)
+	buf, err := buffer.New(path, 1<<20, time.Second, buffer.DefaultStageCap, nil, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = buf.Close() })
 }
 
 func TestNewRejectsZeroMaxBytes(t *testing.T) {
-	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 0, time.Second, nil, nil)
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 0, time.Second, buffer.DefaultStageCap, nil, nil)
 	assert.Error(t, err)
 }
 
 func TestNewRejectsZeroDecisionWait(t *testing.T) {
-	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, 0, nil, nil)
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, 0, buffer.DefaultStageCap, nil, nil)
 	assert.Error(t, err)
 }
 
@@ -222,6 +229,19 @@ func TestWrapWithSkipRecord(t *testing.T) {
 
 	chunks := col.waitFor(t, traceC, 1, 2*time.Second)
 	assert.Len(t, chunks, 1)
+}
+
+func TestNewRejectsTinyStageCap(t *testing.T) {
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, buffer.DefaultStageCap, nil, nil)
+	require.NoError(t, err)
+	_, err = buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, 8, nil, nil)
+	assert.Error(t, err)
+}
+
+func TestNewRejectsStageCapTooLarge(t *testing.T) {
+	// stageCap > maxBytes/2 is rejected
+	_, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1024, time.Second, 800, nil, nil)
+	assert.Error(t, err)
 }
 
 // TestEvictionUnderPressure: when ring is full the writer unblocks after sweep.
