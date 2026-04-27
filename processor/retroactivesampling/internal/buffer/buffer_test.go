@@ -242,19 +242,33 @@ func TestNewRejectsStageCapTooLarge(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestWriteRejectsRecordLargerThanStageCap(t *testing.T) {
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, time.Second, 256, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
+	// Payload + 28-byte header > stageCap=256.
+	big := make([]byte, 300)
+	err = buf.Write(traceA, big, time.Now())
+	assert.Error(t, err)
+}
+
 // TestEvictionUnderPressure: when ring is full the writer unblocks after sweep.
 func TestEvictionUnderPressure(t *testing.T) {
 	col := newCollector()
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
 	rs := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
-	buf := newBuf(t, rs, 10*time.Second, col, nil)
+	buf := newBuf(t, 4*rs, 10*time.Second, col, nil)
 
-	// First write fills ring.
-	require.NoError(t, buf.Write(traceA, data, time.Now()))
+	// Fill ring with uninteresting writes pre-aged past decisionWait so the sweeper
+	// discards them immediately when it must make room.
+	for i := 0; i < 4; i++ {
+		require.NoError(t, buf.Write(traceA, data, time.Now().Add(-20*time.Second)))
+	}
 
 	done := make(chan error, 1)
 	go func() {
-		// Second write must block until first is swept (ring full, sweeper ignores decisionWait).
+		// Next write must block until existing records are swept.
 		done <- buf.Write(traceB, data, time.Now())
 	}()
 

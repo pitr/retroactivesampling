@@ -196,6 +196,9 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
 	}
+	if recSize > int64(b.stageCap) {
+		return fmt.Errorf("record size %d exceeds stage capacity %d", recSize, b.stageCap)
+	}
 
 	if b.wHead+recSize > b.maxBytes {
 		remaining := b.maxBytes - b.wHead
