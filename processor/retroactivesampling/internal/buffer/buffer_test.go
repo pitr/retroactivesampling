@@ -335,3 +335,39 @@ func TestEvictionUnderPressure(t *testing.T) {
 		t.Fatal("Write blocked indefinitely under ring pressure")
 	}
 }
+
+// TestConcurrentWritersAllDelivered: 8 writers, all interest-marked, all records delivered.
+func TestConcurrentWritersAllDelivered(t *testing.T) {
+	const writers = 8
+	const perWriter = 100
+
+	col := newCollector()
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<22, 5*time.Second, buffer.DefaultStageCap, col.onMatch, nil)
+	require.NoError(t, err)
+
+	tids := make([]pcommon.TraceID, writers)
+	for i := range tids {
+		tids[i][15] = byte(i + 1) // distinct, non-zero
+		buf.AddInterest(tids[i])
+	}
+
+	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Add(1)
+		go func(tid pcommon.TraceID) {
+			defer wg.Done()
+			for range perWriter {
+				require.NoError(t, buf.Write(tid, data, time.Now()))
+			}
+		}(tids[w])
+	}
+	wg.Wait()
+
+	require.NoError(t, buf.Close())
+
+	for _, tid := range tids {
+		assert.Len(t, col.get(tid), perWriter, "missing deliveries for trace %v", tid)
+	}
+}

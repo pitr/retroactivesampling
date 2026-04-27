@@ -330,8 +330,11 @@ func (b *SpanBuffer) flushLocked(wrap bool) error {
 	}
 
 	// Pwrite with the lock released.
+	// Other writers may append to b.stage while mu is released; we only write
+	// the flushLen bytes captured above. After Pwrite we slide any bytes
+	// appended by concurrent writers to the front of stage so they are not lost.
 	off := b.wHead
-	buf := b.stage // safe: only this writer owns stage during flush
+	buf := b.stage[:flushLen] // snapshot: only the pre-flush bytes
 	b.mu.Unlock()
 	n, err := unix.Pwrite(b.fd, buf, off)
 	b.mu.Lock()
@@ -350,7 +353,12 @@ func (b *SpanBuffer) flushLocked(wrap bool) error {
 	} else if b.wHead == b.maxBytes {
 		b.wHead = 0
 	}
-	b.stage = b.stage[:0]
+	// Preserve any bytes other writers appended during the Pwrite window.
+	leftover := int64(len(b.stage)) - flushLen
+	if leftover > 0 {
+		copy(b.stage, b.stage[flushLen:])
+	}
+	b.stage = b.stage[:max(leftover, 0)]
 	// Kick sweeper so newly-flushed records become visible for delivery.
 	select {
 	case b.wakeC <- struct{}{}:
