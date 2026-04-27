@@ -87,6 +87,18 @@ shutdown_timeout: 10s     # optional, default 10s
 mode:
   proxy:
     endpoint: central-coordinator:9090
+    tls:                                   # optional; insecure if omitted
+      ca_file: /etc/ssl/ca.crt
+      cert_file: /etc/ssl/client.crt       # optional; required for mTLS
+      key_file: /etc/ssl/client.key        # required if cert_file set
+    headers:                               # optional
+      authorization: "Bearer xyz"
+      x-tenant-id: "abc"
+    compression: gzip                      # optional; "" or "gzip"
+    keepalive:                             # optional
+      time: 30s
+      timeout: 10s
+      permit_without_stream: true
 ```
 
 ### Common fields
@@ -97,7 +109,25 @@ mode:
 | `log_level` | no | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default `INFO`) |
 | `metrics_listen` | no | If set, expose Prometheus metrics at this `host:port` |
 | `shutdown_timeout` | no | Graceful shutdown timeout (default `10s`) |
+| `tls` | no | If set, serve gRPC over TLS. See [Server TLS fields](#server-tls-fields) |
 | `mode` | yes | Exactly one of `single`, `distributed`, or `proxy` must be set |
+
+### Server TLS fields
+
+| Key | Description |
+|---|---|
+| `cert_file` | Path to server certificate PEM (required) |
+| `key_file` | Path to server private key PEM (required) |
+| `client_ca_file` | Optional. If set, require client certificates signed by this CA (mTLS) |
+
+Example:
+
+```yaml
+tls:
+  cert_file: /etc/ssl/server.crt
+  key_file: /etc/ssl/server.key
+  client_ca_file: /etc/ssl/ca.crt   # optional; enables mTLS
+```
 
 ### `mode.single` fields
 
@@ -138,6 +168,28 @@ mode:
 | Key | Required | Description |
 |---|---|---|
 | `endpoint` | yes | `host:port` of the parent coordinator to connect to |
+| `tls` | no | TLS settings for the upstream connection. See [`mode.proxy.tls` fields](#modeproxytls-fields) |
+| `headers` | no | Map of static metadata headers attached to the outbound stream (e.g. bearer tokens, tenant IDs). Keys must be lowercase ASCII; the `grpc-` prefix is reserved |
+| `compression` | no | `gzip` or empty (default) |
+| `keepalive` | no | Client keepalive params. See [`mode.proxy.keepalive` fields](#modeproxykeepalive-fields) |
+
+### `mode.proxy.tls` fields
+
+| Key | Description |
+|---|---|
+| `ca_file` | Path to CA certificate PEM. If unset, system roots are used |
+| `cert_file` | Client certificate PEM. Required for mTLS; `key_file` must also be set |
+| `key_file` | Client private key PEM. Required when `cert_file` is set |
+| `server_name_override` | Override `tls.Config.ServerName` (useful for IP-addressed endpoints with cert SAN mismatch) |
+| `insecure_skip_verify` | Skip server certificate verification |
+
+### `mode.proxy.keepalive` fields
+
+| Key | Description |
+|---|---|
+| `time` | Send a keepalive ping after this much idle time (default: gRPC default — no pings) |
+| `timeout` | Wait this long for ping ack before closing the connection. Must be less than `time` |
+| `permit_without_stream` | Send pings even when there are no active streams |
 
 ## Metrics
 
