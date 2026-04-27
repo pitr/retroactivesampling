@@ -19,6 +19,7 @@ const (
 	maxPoolPayload = 1 << 16 // 64 KiB; larger slices are not returned to the pool
 
 	DefaultStageCap = 4096 // default in-memory staging buffer size
+	evictScanCap    = 4096 // batched header read window in evictBatchedLocked
 )
 
 // payloadPool recycles payload buffers. onMatch receives a slice from this pool;
@@ -43,19 +44,27 @@ type SpanBuffer struct {
 	f               *os.File
 	wHead           int64
 	rHead           int64
-	used            int64
+	used            int64 // disk-live bytes + len(stage)
 	decisionWait    time.Duration
 	interestEntries map[pcommon.TraceID]*list.Element
 	interestList    list.List
 	onMatch         func(pcommon.TraceID, []byte)
 	evictObs        func(time.Duration)
 	fd              int
-	mu              sync.Mutex
-	cond            *sync.Cond
-	wakeC           chan struct{} // writer → sweeper: advance urgently (buffered 1)
-	closeC          chan struct{}
-	sweeperDone     chan struct{}
-	closed          bool
+
+	// Staging
+	stage    []byte
+	stageCap int
+	scratch  []byte // batched header reads in evictBatchedLocked
+
+	// Concurrency
+	mu          sync.Mutex
+	flushDone   *sync.Cond   // signals flush slot release / rHead advance
+	flushing    bool         // a writer owns the flush slot
+	wakeC       chan struct{} // writer/AddInterest → sweeper kick (buffered 1)
+	closeC      chan struct{}
+	sweeperDone chan struct{}
+	closed      bool
 }
 
 func New(
@@ -113,11 +122,14 @@ func New(
 		interestEntries: make(map[pcommon.TraceID]*list.Element),
 		onMatch:         onMatch,
 		evictObs:        evictObs,
+		stage:           make([]byte, 0, stageCap),
+		stageCap:        stageCap,
+		scratch:         make([]byte, evictScanCap),
 		wakeC:           make(chan struct{}, 1),
 		closeC:          make(chan struct{}),
 		sweeperDone:     make(chan struct{}),
 	}
-	b.cond = sync.NewCond(&b.mu)
+	b.flushDone = sync.NewCond(&b.mu)
 	go b.runSweeper()
 	return b, nil
 }
@@ -206,7 +218,7 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 		case b.wakeC <- struct{}{}:
 		default:
 		}
-		b.cond.Wait()
+		b.flushDone.Wait()
 	}
 	if b.closed {
 		return fmt.Errorf("buffer closed")
@@ -237,7 +249,7 @@ func (b *SpanBuffer) Close() error {
 		return fmt.Errorf("already closed")
 	}
 	b.closed = true
-	b.cond.Broadcast()
+	b.flushDone.Broadcast()
 	b.mu.Unlock()
 	close(b.closeC)
 	<-b.sweeperDone
@@ -272,7 +284,7 @@ func (b *SpanBuffer) runSweeper() {
 			b.used -= b.maxBytes - rHead
 			b.rHead = 0
 			b.mu.Unlock()
-			b.cond.Broadcast()
+			b.flushDone.Broadcast()
 			continue
 		}
 
@@ -294,7 +306,7 @@ func (b *SpanBuffer) runSweeper() {
 			b.used -= recSize
 			b.rHead = 0
 			b.mu.Unlock()
-			b.cond.Broadcast()
+			b.flushDone.Broadcast()
 			continue
 		}
 
@@ -329,7 +341,7 @@ func (b *SpanBuffer) runSweeper() {
 			b.rHead = 0
 		}
 		b.mu.Unlock()
-		b.cond.Broadcast()
+		b.flushDone.Broadcast()
 
 		if interesting {
 			pb := payloadPool.Get().(*[]byte)
