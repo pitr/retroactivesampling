@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/proto"
 
 	gen "pitr.ca/retroactivesampling/proto"
@@ -144,12 +145,16 @@ func (s *Server) Broadcast(traceID []byte) {
 	s.mu.Unlock()
 }
 
-func (s *Server) Start(ctx context.Context, addr string, shutdownTimeout time.Duration) error {
+func (s *Server) Start(ctx context.Context, addr string, shutdownTimeout time.Duration, tlsCreds credentials.TransportCredentials) error {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	gs := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if tlsCreds != nil {
+		opts = append(opts, grpc.Creds(tlsCreds))
+	}
+	gs := grpc.NewServer(opts...)
 	gen.RegisterCoordinatorServer(gs, s)
 	go func() {
 		<-ctx.Done()
@@ -171,7 +176,7 @@ func (s *Server) Start(ctx context.Context, addr string, shutdownTimeout time.Du
 			gs.Stop()
 		}
 	}()
-	slog.Info("coordinator listening", "addr", addr)
+	slog.Info("coordinator listening", "addr", addr, "tls", tlsCreds != nil)
 	return gs.Serve(lis)
 }
 
