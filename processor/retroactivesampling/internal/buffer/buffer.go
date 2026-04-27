@@ -429,13 +429,16 @@ func (b *SpanBuffer) evictBatchedLocked(need int64) error {
 			}
 
 			if b.hasInterestLocked(tid) {
-				// Hand off to sweeper, wait for it to advance rHead past this record.
-				targetRHead := b.rHead + recSize
+				// Hand off to sweeper, wait for it to consume this record.
+				// We track `used` rather than rHead: rHead can wrap around to 0
+				// (numerically less than rHead+recSize) after the sweeper processes
+				// subsequent records, making a raw rHead comparison loop forever.
+				usedBefore := b.used
 				select {
 				case b.wakeC <- struct{}{}:
 				default:
 				}
-				for b.rHead < targetRHead && !b.closed {
+				for b.used >= usedBefore && !b.closed {
 					b.flushDone.Wait()
 				}
 				if b.closed {
