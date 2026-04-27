@@ -8,21 +8,24 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"pitr.ca/retroactivesampling/coordinator/proxy"
 	"pitr.ca/retroactivesampling/coordinator/redis"
+	"pitr.ca/retroactivesampling/coordinator/server"
 )
 
 type Config struct {
-	GRPCListen      string        `yaml:"grpc_listen"`
-	LogLevel        slog.Level    `yaml:"log_level"`
-	MetricsListen   string        `yaml:"metrics_listen"`
-	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
-	Mode            ModeConfig    `yaml:"mode"`
+	GRPCListen      string            `yaml:"grpc_listen"`
+	LogLevel        slog.Level        `yaml:"log_level"`
+	MetricsListen   string            `yaml:"metrics_listen"`
+	ShutdownTimeout time.Duration     `yaml:"shutdown_timeout"`
+	TLS             *server.TLSConfig `yaml:"tls"`
+	Mode            ModeConfig        `yaml:"mode"`
 }
 
 type ModeConfig struct {
-	Single      *SingleConfig      `yaml:"single"`
-	Distributed *DistributedConfig `yaml:"distributed"`
-	Proxy       *ProxyConfig       `yaml:"proxy"`
+	Single      *SingleConfig       `yaml:"single"`
+	Distributed *DistributedConfig  `yaml:"distributed"`
+	Proxy       *proxy.ClientConfig `yaml:"proxy"`
 }
 
 func (m ModeConfig) active() (any, error) {
@@ -54,10 +57,6 @@ type DistributedConfig struct {
 	DecidedKeyTTL time.Duration  `yaml:"decided_key_ttl"`
 	RedisPrimary  redis.Config   `yaml:"redis_primary"`
 	RedisReplicas []redis.Config `yaml:"redis_replicas"`
-}
-
-type ProxyConfig struct {
-	Endpoint string `yaml:"endpoint"`
 }
 
 func loadConfig(path string) (*Config, error) {

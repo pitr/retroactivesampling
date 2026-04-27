@@ -115,12 +115,9 @@ func main() {
 		if err != nil {
 			fatal("redis", "err", err)
 		}
-	case *ProxyConfig:
-		if m.Endpoint == "" {
-			fatal("proxy mode: endpoint is required")
-		}
+	case *proxy.ClientConfig:
 		slog.Info("running in proxy mode", "endpoint", m.Endpoint)
-		ps, err = proxy.New(m.Endpoint, srv.Broadcast)
+		ps, err = proxy.New(*m, srv.Broadcast)
 		if err != nil {
 			fatal("proxy", "err", err)
 		}
@@ -128,7 +125,11 @@ func main() {
 		fatal("unknown mode type", "type", fmt.Sprintf("%T", activeMode))
 	}
 
-	if err := srv.Start(ctx, cfg.GRPCListen, cfg.ShutdownTimeout); err != nil {
+	tlsCreds, err := cfg.TLS.Credentials()
+	if err != nil {
+		fatal("server tls", "err", err)
+	}
+	if err := srv.Start(ctx, cfg.GRPCListen, cfg.ShutdownTimeout, tlsCreds); err != nil {
 		fatal("serve", "err", err)
 	}
 	_ = ps.Close()
