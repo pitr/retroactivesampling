@@ -1,7 +1,6 @@
 package buffer
 
 import (
-	"bytes"
 	"container/list"
 	"encoding/binary"
 	"fmt"
@@ -20,14 +19,10 @@ const (
 	maxPoolPayload = 1 << 16 // 64 KiB; larger slices are not returned to the pool
 )
 
-var (
-	zeroID [16]byte
-	// payloadPool recycles payload buffers. onMatch receives a slice from this pool;
-	// it must not retain the slice beyond its return (the sweeper recycles it immediately).
-	payloadPool = sync.Pool{New: func() any { b := make([]byte, 0, 512); return &b }}
-)
+// payloadPool recycles payload buffers. onMatch receives a slice from this pool;
+// it must not retain the slice beyond its return (the sweeper recycles it immediately).
+var payloadPool = sync.Pool{New: func() any { b := make([]byte, 0, 512); return &b }}
 
-// interestEntry is an element in the interest list.
 type interestEntry struct {
 	id      pcommon.TraceID
 	addedAt time.Time
@@ -42,11 +37,11 @@ type interestEntry struct {
 // insertion/refresh time (newest at front). Entries expire after decisionWait.
 // Not goroutine-safe on their own; callers hold mu.
 type SpanBuffer struct {
-	maxBytes        uint64
+	maxBytes        int64
 	f               *os.File
-	wHead           uint64
-	rHead           uint64
-	used            uint64
+	wHead           int64
+	rHead           int64
+	used            int64
 	decisionWait    time.Duration
 	interestEntries map[pcommon.TraceID]*list.Element
 	interestList    list.List
@@ -99,7 +94,7 @@ func New(
 		}
 	}
 	b := &SpanBuffer{
-		maxBytes:        uint64(maxBytes),
+		maxBytes:        maxBytes,
 		f:               f,
 		fd:              int(f.Fd()),
 		decisionWait:    decisionWait,
@@ -173,7 +168,7 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	recSize := hdrSize + uint64(len(data))
+	recSize := hdrSize + int64(len(data))
 	if recSize > b.maxBytes {
 		return fmt.Errorf("record size %d exceeds ring capacity %d", recSize, b.maxBytes)
 	}
@@ -183,7 +178,7 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 		if remaining >= hdrSize {
 			var pad [hdrSize]byte
 			binary.BigEndian.PutUint32(pad[24:28], uint32(remaining-hdrSize))
-			if _, err := b.f.WriteAt(pad[:], int64(b.wHead)); err != nil {
+			if _, err := b.f.WriteAt(pad[:], b.wHead); err != nil {
 				return err
 			}
 		}
@@ -210,7 +205,7 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	binary.BigEndian.PutUint64(hdr[16:24], uint64(insertedAt.UnixNano()))
 	binary.BigEndian.PutUint32(hdr[24:28], uint32(len(data)))
 	iovs := [2][]byte{hdr[:], data}
-	if _, err := unix.Pwritev(b.fd, iovs[:], int64(b.wHead)); err != nil {
+	if _, err := unix.Pwritev(b.fd, iovs[:], b.wHead); err != nil {
 		return err
 	}
 	b.used += recSize
@@ -273,15 +268,16 @@ func (b *SpanBuffer) runSweeper() {
 		// goroutine, so the position is stable between the unlock above and the
 		// lock below.
 		var hdr [hdrSize]byte
-		if _, err := b.f.ReadAt(hdr[:], int64(rHead)); err != nil {
+		if _, err := b.f.ReadAt(hdr[:], rHead); err != nil {
 			return
 		}
 
-		dataLen := uint64(binary.BigEndian.Uint32(hdr[24:28]))
-		recSize := uint64(hdrSize) + dataLen
+		traceID := pcommon.TraceID(hdr[:16])
+		dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
+		recSize := hdrSize + dataLen
 
 		// Skip/pad record written at the wrap boundary (zero traceID).
-		if bytes.Equal(hdr[:16], zeroID[:]) {
+		if traceID.IsEmpty() {
 			b.mu.Lock()
 			b.used -= recSize
 			b.rHead = 0
@@ -290,8 +286,6 @@ func (b *SpanBuffer) runSweeper() {
 			continue
 		}
 
-		var traceID pcommon.TraceID
-		copy(traceID[:], hdr[:16])
 		insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 		age := time.Since(insertedAt)
 
@@ -314,7 +308,9 @@ func (b *SpanBuffer) runSweeper() {
 		}
 
 		b.mu.Lock()
-		interesting = b.hasInterestLocked(traceID) // re-check: AddInterest may have fired during wait
+		if !interesting {
+			interesting = b.hasInterestLocked(traceID) // re-check: AddInterest may have fired during wait
+		}
 		b.used -= recSize
 		b.rHead += recSize
 		if b.rHead >= b.maxBytes {
@@ -325,19 +321,18 @@ func (b *SpanBuffer) runSweeper() {
 
 		if interesting {
 			pb := payloadPool.Get().(*[]byte)
-			if uint64(cap(*pb)) < dataLen {
+			if int64(cap(*pb)) < dataLen {
 				*pb = make([]byte, dataLen)
 			} else {
 				*pb = (*pb)[:dataLen]
 			}
-			if _, err := b.f.ReadAt(*pb, int64(rHead+hdrSize)); err == nil {
+			if _, err := b.f.ReadAt(*pb, rHead+hdrSize); err == nil {
 				b.onMatch(traceID, *pb)
 			}
 			if cap(*pb) <= maxPoolPayload {
 				payloadPool.Put(pb)
 			}
-		} else {
-			b.evictObs(age)
 		}
+		b.evictObs(age)
 	}
 }
