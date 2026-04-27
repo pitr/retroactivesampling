@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
+	"pitr.ca/retroactivesampling/coordinator/internal/testtls"
 	"pitr.ca/retroactivesampling/coordinator/proxy"
+	"pitr.ca/retroactivesampling/coordinator/server"
 	gen "pitr.ca/retroactivesampling/proto"
 )
 
@@ -151,5 +153,49 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Close() did not return in time")
+	}
+}
+
+func startTLSGRPCServer(t *testing.T, srv gen.CoordinatorServer, certFile, keyFile, clientCAFile string) string {
+	t.Helper()
+	tlsCfg := &server.TLSConfig{CertFile: certFile, KeyFile: keyFile, ClientCAFile: clientCAFile}
+	creds, err := tlsCfg.Credentials()
+	require.NoError(t, err)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	gs := grpc.NewServer(grpc.Creds(creds))
+	gen.RegisterCoordinatorServer(gs, srv)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	return lis.Addr().String()
+}
+
+func TestProxyMTLSRoundTrip(t *testing.T) {
+	files := testtls.Generate(t, []string{"localhost"}, []net.IP{net.ParseIP("127.0.0.1")})
+	mock := newMock()
+	addr := startTLSGRPCServer(t, mock, files.Cert, files.Key, files.CACert)
+
+	cfg := proxy.ClientConfig{
+		Endpoint: addr,
+		TLS: &proxy.TLSConfig{
+			CAFile:             files.CACert,
+			CertFile:           files.Cert,
+			KeyFile:            files.Key,
+			ServerNameOverride: "localhost",
+		},
+	}
+	ps, err := proxy.New(cfg, func([]byte) {})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ps.Close() })
+
+	novel, err := ps.Publish(t.Context(), traceBytes)
+	require.NoError(t, err)
+	assert.False(t, novel)
+
+	select {
+	case id := <-mock.notified:
+		assert.Equal(t, traceHex, id)
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout: NotifyInteresting not received over TLS")
 	}
 }
