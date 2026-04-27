@@ -10,11 +10,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/processor/processorhelper"
-	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/buffer"
-	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/cache"
 	coord "pitr.ca/retroactivesampling/processor/retroactivesampling/internal/coordinator"
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/evaluator"
 	"pitr.ca/retroactivesampling/processor/retroactivesampling/internal/metadata"
@@ -24,7 +22,6 @@ type retroactiveProcessor struct {
 	logger      *zap.Logger
 	next        consumer.Traces
 	buf         *buffer.SpanBuffer
-	ic          *cache.InterestCache
 	eval        evaluator.Evaluator
 	coord       *coord.Client
 	telemetry   *metadata.TelemetryBuilder
@@ -37,46 +34,37 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	if err != nil {
 		return nil, err
 	}
-	ic := cache.New(cfg.MaxInterestCacheEntries)
-	buf, err := buffer.New(cfg.BufferFile, cfg.MaxBufferBytes, func(d time.Duration) {
-		tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
-	})
-	if err != nil {
-		tb.Shutdown()
-		return nil, err
-	}
-	chain, err := evaluator.Build(set, cfg.Policies)
-	if err != nil {
-		_ = buf.Close()
-		tb.Shutdown()
-		return nil, err
-	}
-	if err := tb.RegisterRetroactiveSamplingBufferLiveBytesCallback(func(_ context.Context, o metric.Int64Observer) error {
-		o.Observe(buf.LiveBytes())
-		return nil
-	}); err != nil {
-		_ = buf.Close()
-		tb.Shutdown()
-		return nil, err
-	}
-	if err := tb.RegisterRetroactiveSamplingBufferOrphanedBytesCallback(func(_ context.Context, o metric.Int64Observer) error {
-		o.Observe(buf.OrphanedBytes())
-		return nil
-	}); err != nil {
-		_ = buf.Close()
-		tb.Shutdown()
-		return nil, err
-	}
-	return &retroactiveProcessor{
+
+	p := &retroactiveProcessor{
 		logger:      set.Logger,
 		next:        next,
-		buf:         buf,
-		ic:          ic,
-		eval:        chain,
 		telemetry:   tb,
 		grpcCfg:     cfg.CoordinatorGRPC,
 		telSettings: set,
-	}, nil
+	}
+
+	buf, err := buffer.New(
+		cfg.BufferFile,
+		cfg.MaxBufferBytes,
+		cfg.DecisionWaitTime,
+		p.onMatch,
+		func(d time.Duration) {
+			tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), d.Milliseconds())
+		},
+	)
+	if err != nil {
+		tb.Shutdown()
+		return nil, err
+	}
+	p.buf = buf
+
+	p.eval, err = evaluator.Build(set, cfg.Policies)
+	if err != nil {
+		_ = buf.Close()
+		tb.Shutdown()
+		return nil, err
+	}
+	return p, nil
 }
 
 func (p *retroactiveProcessor) Start(_ context.Context, host component.Host) error {
@@ -97,7 +85,7 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 	out := ptrace.NewTraces()
 	now := time.Now()
 	for tid, spans := range groupByTrace(td) {
-		if p.ic.Has(tid) {
+		if p.buf.HasInterest(tid) {
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
 			continue
 		}
@@ -108,11 +96,14 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 		switch d {
 		case evaluator.Sampled:
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
-			p.recordInteresting(tid)
+			p.buf.AddInterest(tid)
+			if p.coord != nil {
+				p.coord.Notify(tid)
+			}
 			continue
 		case evaluator.SampledLocal:
 			spans.ResourceSpans().MoveAndAppendTo(out.ResourceSpans())
-			p.recordLocal(tid)
+			p.buf.AddInterest(tid)
 			continue
 		}
 		m := ptrace.ProtoMarshaler{}
@@ -121,7 +112,7 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 			p.logger.Error("marshal spans for buffer, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
 			continue
 		}
-		if err := p.buf.WriteWithEviction(tid, data, now); err != nil {
+		if err := p.buf.Write(tid, data, now); err != nil {
 			p.logger.Error("could not store trace locally, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
 		}
 	}
@@ -131,55 +122,19 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 	return out, nil
 }
 
-func (p *retroactiveProcessor) recordInteresting(tid pcommon.TraceID) {
-	p.ic.Add(tid)
-	if p.coord != nil {
-		p.coord.Notify(tid)
-	}
-	p.hydrate(tid)
-}
-
-func (p *retroactiveProcessor) recordLocal(tid pcommon.TraceID) {
-	p.ic.Add(tid)
-	p.hydrate(tid)
-}
-
-func (p *retroactiveProcessor) hydrate(tid pcommon.TraceID) {
-	bufs, err := p.buf.ReadAndDelete(tid)
+func (p *retroactiveProcessor) onMatch(traceID pcommon.TraceID, data []byte) {
+	u := ptrace.ProtoUnmarshaler{}
+	t, err := u.UnmarshalTraces(data)
 	if err != nil {
-		p.logger.Error("read buffer", zap.Stringer("trace_id", tid), zap.Error(err))
+		p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", traceID), zap.Error(err))
 		return
 	}
-	u := ptrace.ProtoUnmarshaler{}
-	for _, chunk := range bufs {
-		t, err := u.UnmarshalTraces(chunk)
-		if err != nil {
-			p.logger.Warn("unmarshal buffered trace", zap.Stringer("trace_id", tid), zap.Error(err))
-			continue
-		}
-		if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
-			p.logger.Error("could not send spans from local disk", zap.Stringer("trace_id", tid), zap.Error(err))
-		}
+	if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
+		p.logger.Error("could not send spans from local disk", zap.Stringer("trace_id", traceID), zap.Error(err))
 	}
 }
 
 func (p *retroactiveProcessor) onDecision(traceID pcommon.TraceID) {
 	p.logger.Debug("coordinator decision received", zap.Stringer("trace_id", traceID))
-	p.ic.Add(traceID)
-	bufs, err := p.buf.ReadAndDelete(traceID)
-	if err != nil {
-		p.logger.Error("read buffer", zap.Stringer("trace_id", traceID), zap.Error(err))
-		return
-	}
-	u := ptrace.ProtoUnmarshaler{}
-	for _, chunk := range bufs {
-		t, err := u.UnmarshalTraces(chunk)
-		if err != nil {
-			p.logger.Warn("coordinator decision: unmarshal buffered trace", zap.Stringer("trace_id", traceID), zap.Error(err))
-			continue
-		}
-		if err := p.next.ConsumeTraces(context.Background(), t); err != nil {
-			p.logger.Error("ingest coordinator-decided trace", zap.Stringer("trace_id", traceID), zap.Error(err))
-		}
-	}
+	p.buf.AddInterest(traceID)
 }

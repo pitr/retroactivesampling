@@ -2,6 +2,7 @@ package retroactivesampling
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -21,7 +22,7 @@ func NewFactory() otelprocessor.Factory {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		MaxInterestCacheEntries: 100_000,
+		DecisionWaitTime: 30 * time.Second,
 	}
 }
 

@@ -111,7 +111,7 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 	cfg := &processor.Config{
 		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
-		MaxInterestCacheEntries: 1000,
+		DecisionWaitTime:        300 * time.Millisecond,
 		CoordinatorGRPC:         insecureGRPCConfig(addr),
 		Policies:                []evaluator.PolicyCfg{p},
 	}
@@ -199,8 +199,10 @@ func TestEagerEval_BufferedSpansIncludedOnInterestingBatch(t *testing.T) {
 	errTrace := makeTraceWithStatus(tid, ptrace.StatusCodeError)
 	require.NoError(t, p.ConsumeTraces(context.Background(), errTrace))
 
-	// Both spans (buffered ok + current error) ingested in one ConsumeTraces call.
-	assert.Equal(t, 2, sink.SpanCount(), "buffered ok span and error span must both be ingested")
+	// Buffered ok span is delivered async via sweeper; error span is forwarded synchronously.
+	require.Eventually(t, func() bool {
+		return sink.SpanCount() == 2
+	}, 2*time.Second, 5*time.Millisecond, "buffered ok span and error span must both be ingested")
 }
 
 // TestConcurrentInterestingSpansSameTrace verifies no double-write when two goroutines
@@ -231,7 +233,10 @@ func TestConcurrentInterestingSpansSameTrace(t *testing.T) {
 	start.Done()
 	done.Wait()
 
-	// 1 pre-buffered ok span + 2 error spans = 3. The buffered span must not appear twice (4).
+	// 1 pre-buffered ok span (async delivery) + 2 error spans = 3. Must not be 4 (double-buffered).
+	require.Eventually(t, func() bool {
+		return sink.SpanCount() >= 3
+	}, 2*time.Second, 5*time.Millisecond, "buffered span must not be duplicated")
 	assert.Equal(t, 3, sink.SpanCount(), "buffered span must not be duplicated")
 }
 
@@ -289,11 +294,11 @@ func TestProbabilistic_NoCoordinatorNotify(t *testing.T) {
 	p.Type = evaluator.Probabilistic
 	p.ProbabilisticCfg = evaluator.ProbabilisticCfg{SamplingPercentage: 100}
 	cfg := &processor.Config{
-		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
-		MaxBufferBytes:          100 << 20,
-		MaxInterestCacheEntries: 1000,
-		CoordinatorGRPC:         insecureGRPCConfig(addr),
-		Policies:                []evaluator.PolicyCfg{p},
+		BufferFile:       filepath.Join(t.TempDir(), "buf.ring"),
+		MaxBufferBytes:   100 << 20,
+		DecisionWaitTime: 300 * time.Millisecond,
+		CoordinatorGRPC:  insecureGRPCConfig(addr),
+		Policies:         []evaluator.PolicyCfg{p},
 	}
 	factory := processor.NewFactory()
 	proc, err := factory.CreateTraces(

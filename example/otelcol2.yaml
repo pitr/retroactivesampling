@@ -12,6 +12,7 @@ processors:
   retroactive_sampling:
     buffer_file: ./data/retrosampling2.ring
     max_buffer_bytes: 1073741824  # 1 GB
+    decision_wait_time: 10s
     coordinator_grpc:
       endpoint: localhost:9090
       tls:
