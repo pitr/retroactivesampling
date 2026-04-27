@@ -65,5 +65,13 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	var cfg Config
-	return &cfg, yaml.Unmarshal(data, &cfg)
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.Mode.Proxy != nil {
+		if err := cfg.Mode.Proxy.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return &cfg, nil
 }

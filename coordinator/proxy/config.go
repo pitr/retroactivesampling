@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -107,6 +108,9 @@ func (c *ClientConfig) dialOptions() ([]grpc.DialOption, error) {
 func (c *ClientConfig) transportCredentials() (credentials.TransportCredentials, error) {
 	if c.TLS == nil {
 		return insecure.NewCredentials(), nil
+	}
+	if c.TLS.InsecureSkipVerify {
+		slog.Warn("proxy tls: insecure_skip_verify enabled; server certificate will not be validated", "endpoint", c.Endpoint)
 	}
 	tlsCfg := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
