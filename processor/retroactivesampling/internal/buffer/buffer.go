@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
@@ -50,6 +52,7 @@ type SpanBuffer struct {
 	interestList    list.List
 	onMatch         func(pcommon.TraceID, []byte)
 	evictObs        func(time.Duration)
+	fd              int
 	mu              sync.Mutex
 	cond            *sync.Cond
 	wakeC           chan struct{} // writer → sweeper: advance urgently (buffered 1)
@@ -98,6 +101,7 @@ func New(
 	b := &SpanBuffer{
 		maxBytes:        uint64(maxBytes),
 		f:               f,
+		fd:              int(f.Fd()),
 		decisionWait:    decisionWait,
 		interestEntries: make(map[pcommon.TraceID]*list.Element),
 		onMatch:         onMatch,
@@ -205,10 +209,8 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	copy(hdr[:16], traceID[:])
 	binary.BigEndian.PutUint64(hdr[16:24], uint64(insertedAt.UnixNano()))
 	binary.BigEndian.PutUint32(hdr[24:28], uint32(len(data)))
-	if _, err := b.f.WriteAt(hdr[:], int64(b.wHead)); err != nil {
-		return err
-	}
-	if _, err := b.f.WriteAt(data, int64(b.wHead+hdrSize)); err != nil {
+	iovs := [2][]byte{hdr[:], data}
+	if _, err := unix.Pwritev(b.fd, iovs[:], int64(b.wHead)); err != nil {
 		return err
 	}
 	b.used += recSize
