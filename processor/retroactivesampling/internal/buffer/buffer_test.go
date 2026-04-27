@@ -141,18 +141,34 @@ func TestMultipleDeltas(t *testing.T) {
 	assert.Len(t, chunks, 2)
 }
 
-// TestEvictionObserver: non-interesting record is swept after decisionWait and
-// evictObserver is called.
+// TestEvictionObserver: writer-driven eviction calls evictObs with the record's age.
 func TestEvictionObserver(t *testing.T) {
-	observed := make(chan time.Duration, 1)
-	buf := newBuf(t, 1<<20, 10*time.Millisecond, nil, func(d time.Duration) {
-		select {
-		case observed <- d:
-		default:
-		}
-	})
+	observed := make(chan time.Duration, 4)
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	rs := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+
+	// Two-record ring with explicit one-record stageCap so each Write triggers a flush
+	// and the third Write requires eviction.
+	buf, err := buffer.New(
+		filepath.Join(t.TempDir(), "buf.ring"),
+		2*rs,
+		10*time.Millisecond,
+		int(rs),
+		nil,
+		func(d time.Duration) {
+			select {
+			case observed <- d:
+			default:
+			}
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
 	require.NoError(t, buf.Write(traceA, data, time.Now().Add(-20*time.Millisecond)))
+	require.NoError(t, buf.Write(traceB, data, time.Now().Add(-20*time.Millisecond)))
+	require.NoError(t, buf.Write(traceC, data, time.Now()))
+
 	select {
 	case d := <-observed:
 		assert.Greater(t, d, time.Duration(0))
@@ -161,26 +177,35 @@ func TestEvictionObserver(t *testing.T) {
 	}
 }
 
-// TestDecisionWaitHonoured: record is not swept before decisionWait, then is.
-func TestDecisionWaitHonoured(t *testing.T) {
-	observed := make(chan struct{}, 1)
-	buf := newBuf(t, 1<<20, 50*time.Millisecond, nil, func(time.Duration) {
-		select {
-		case observed <- struct{}{}:
-		default:
-		}
-	})
+// TestUninterestingRecordRemainsUntilPressure: with no write pressure and no
+// interest, the record sits in the buffer; only writer-driven eviction (or a
+// sweeper kick from AddInterest / flush completion) discards it.
+func TestUninterestingRecordRemainsUntilPressure(t *testing.T) {
+	observed := make(chan time.Duration, 1)
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	rs := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	buf, err := buffer.New(
+		filepath.Join(t.TempDir(), "buf.ring"),
+		2*rs,
+		10*time.Millisecond,
+		int(rs),
+		nil,
+		func(d time.Duration) {
+			select {
+			case observed <- d:
+			default:
+			}
+		},
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = buf.Close() })
+
 	require.NoError(t, buf.Write(traceA, data, time.Now()))
+	// One write goes into stage; no further pressure; no kick.
 	select {
 	case <-observed:
-		t.Fatal("record swept before decisionWait expired")
-	case <-time.After(20 * time.Millisecond):
-	}
-	select {
-	case <-observed:
-	case <-time.After(2 * time.Second):
-		t.Fatal("record not swept after decisionWait")
+		t.Fatal("uninteresting record was dropped without write pressure")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
