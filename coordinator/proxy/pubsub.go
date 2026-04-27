@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	gen "pitr.ca/retroactivesampling/proto"
 )
@@ -19,20 +19,29 @@ const (
 
 type PubSub struct {
 	conn    *grpc.ClientConn
+	headers metadata.MD
 	sendCh  chan []byte
 	handler func([]byte)
 	ctx     context.Context
 	cancel  context.CancelFunc
 }
 
-func New(endpoint string, handler func([]byte)) (*PubSub, error) {
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func New(cfg ClientConfig, handler func([]byte)) (*PubSub, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	opts, err := cfg.dialOptions()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(cfg.Endpoint, opts...)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PubSub{
 		conn:    conn,
+		headers: headersToMD(cfg.Headers),
 		sendCh:  make(chan []byte, sendBufSize),
 		handler: handler,
 		ctx:     ctx,
@@ -40,6 +49,17 @@ func New(endpoint string, handler func([]byte)) (*PubSub, error) {
 	}
 	go p.run()
 	return p, nil
+}
+
+func headersToMD(h map[string]string) metadata.MD {
+	if len(h) == 0 {
+		return nil
+	}
+	md := metadata.MD{}
+	for k, v := range h {
+		md.Set(k, v)
+	}
+	return md
 }
 
 // Always returns (false, nil) — no local dedup; novel count is tracked by the parent coordinator.
@@ -66,7 +86,11 @@ func (p *PubSub) run() {
 		default:
 		}
 		connCtx, connCancel := context.WithCancel(p.ctx)
-		client, err := gen.NewCoordinatorClient(p.conn).Connect(connCtx)
+		streamCtx := connCtx
+		if p.headers != nil {
+			streamCtx = metadata.NewOutgoingContext(connCtx, p.headers)
+		}
+		client, err := gen.NewCoordinatorClient(p.conn).Connect(streamCtx)
 		if err != nil {
 			connCancel()
 			slog.Warn("proxy: connect failed, retrying", "backoff", backoff, "err", err)

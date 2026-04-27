@@ -80,7 +80,7 @@ func TestPublishSendsNotifyInteresting(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps, err := proxy.New(addr, func([]byte) {})
+	ps, err := proxy.New(proxy.ClientConfig{Endpoint: addr}, func([]byte) {})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
@@ -100,7 +100,7 @@ func TestPublishAlwaysReturnsFalse(t *testing.T) {
 	mock := newMock()
 	addr := startGRPCServer(t, mock)
 
-	ps, err := proxy.New(addr, func([]byte) {})
+	ps, err := proxy.New(proxy.ClientConfig{Endpoint: addr}, func([]byte) {})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
@@ -116,7 +116,7 @@ func TestHandlerFiredOnDecision(t *testing.T) {
 	addr := startGRPCServer(t, mock)
 
 	received := make(chan []byte, 1)
-	ps, err := proxy.New(addr, func(id []byte) { received <- id })
+	ps, err := proxy.New(proxy.ClientConfig{Endpoint: addr}, func(id []byte) { received <- id })
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ps.Close() })
 
@@ -142,7 +142,7 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 	addr := lis.Addr().String()
 	_ = lis.Close()
 
-	ps, err := proxy.New(addr, func([]byte) {})
+	ps, err := proxy.New(proxy.ClientConfig{Endpoint: addr}, func([]byte) {})
 	require.NoError(t, err)
 	done := make(chan struct{})
 	go func() { _ = ps.Close(); close(done) }()
@@ -153,4 +153,3 @@ func TestCloseStopsReconnectLoop(t *testing.T) {
 		t.Fatal("Close() did not return in time")
 	}
 }
-
