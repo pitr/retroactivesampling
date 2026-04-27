@@ -553,6 +553,27 @@ func (b *SpanBuffer) runSweeper() {
 			}
 
 			interesting := b.hasInterestLocked(tid)
+			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
+
+			// Grace period: an uninteresting record younger than decisionWait
+			// might still be marked interesting by a late AddInterest. Wait it
+			// out (or until the next kick) before dropping. Skipped when:
+			//   - closing (drain to exit promptly)
+			//   - ring is full (a later interesting record may be blocked
+			//     behind this one; pressure trumps the grace window).
+			full := diskUsed >= b.maxBytes
+			if !interesting && !closing && !full {
+				if age := time.Since(insertedAt); age < b.decisionWait {
+					b.mu.Unlock()
+					select {
+					case <-time.After(b.decisionWait - age):
+					case <-b.wakeC:
+					case <-b.closeC:
+						closing = true
+					}
+					continue
+				}
+			}
 
 			var pb *[]byte
 			if interesting {
@@ -572,7 +593,6 @@ func (b *SpanBuffer) runSweeper() {
 				}
 			}
 
-			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 			b.used -= recSize
 			b.rHead += recSize
 			if b.rHead >= b.maxBytes {

@@ -177,17 +177,21 @@ func TestEvictionObserver(t *testing.T) {
 	}
 }
 
-// TestUninterestingRecordRemainsUntilPressure: with no write pressure and no
-// interest, the record sits in the buffer; only writer-driven eviction (or a
-// sweeper kick from AddInterest / flush completion) discards it.
-func TestUninterestingRecordRemainsUntilPressure(t *testing.T) {
+// TestDecisionWaitHonoured: an uninteresting record on disk is not dropped by
+// the sweeper before decisionWait elapses; after decisionWait it is dropped.
+// (Writer-driven eviction under ring pressure ignores decisionWait — that's the
+// concern of TestEvictionUnderPressure.)
+func TestDecisionWaitHonoured(t *testing.T) {
 	observed := make(chan time.Duration, 1)
 	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
 	rs := recSize(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	// 1-record stageCap so the first Write flushes to disk; the sweeper's
+	// flush-completion kick would drop the record immediately if the gate were
+	// missing.
 	buf, err := buffer.New(
 		filepath.Join(t.TempDir(), "buf.ring"),
 		2*rs,
-		10*time.Millisecond,
+		100*time.Millisecond,
 		int(rs),
 		nil,
 		func(d time.Duration) {
@@ -201,11 +205,21 @@ func TestUninterestingRecordRemainsUntilPressure(t *testing.T) {
 	t.Cleanup(func() { _ = buf.Close() })
 
 	require.NoError(t, buf.Write(traceA, data, time.Now()))
-	// One write goes into stage; no further pressure; no kick.
+	// A second write triggers the flush of the first record to disk, so it's
+	// visible to the sweeper.
+	require.NoError(t, buf.Write(traceB, data, time.Now()))
+
 	select {
 	case <-observed:
-		t.Fatal("uninteresting record was dropped without write pressure")
-	case <-time.After(50 * time.Millisecond):
+		t.Fatal("record dropped before decisionWait elapsed")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	select {
+	case d := <-observed:
+		assert.Greater(t, d, time.Duration(0))
+	case <-time.After(2 * time.Second):
+		t.Fatal("record not dropped after decisionWait")
 	}
 }
 
