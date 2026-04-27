@@ -59,11 +59,12 @@ type SpanBuffer struct {
 
 	// Concurrency
 	mu          sync.Mutex
-	flushDone   *sync.Cond   // signals flush slot release / rHead advance
-	flushing    bool         // a writer owns the flush slot
+	flushDone   *sync.Cond    // signals flush slot release / rHead advance
+	flushing    bool          // a writer owns the flush slot
 	wakeC       chan struct{} // writer/AddInterest → sweeper kick (buffered 1)
 	closeC      chan struct{}
 	sweeperDone chan struct{}
+	sweeperErr  error // set if sweeper exited due to an unrecoverable I/O error; surfaced from Close
 	closed      bool
 }
 
@@ -473,18 +474,26 @@ func (b *SpanBuffer) Close() error {
 		return fmt.Errorf("already closed")
 	}
 	// Flush any pending stage so sweeper can deliver outstanding interesting records.
+	var flushErr error
 	if len(b.stage) > 0 {
-		// Flush without wrap consideration; if wrap is needed it'll happen here
-		// just like in Write. Compute the wrap flag once.
 		wrap := b.wHead+int64(len(b.stage)) > b.maxBytes
-		_ = b.flushLocked(wrap) // best-effort; ignore error to ensure Close progresses
+		flushErr = b.flushLocked(wrap)
 	}
 	b.closed = true
 	b.flushDone.Broadcast()
 	b.mu.Unlock()
 	close(b.closeC)
 	<-b.sweeperDone
-	return b.f.Close()
+
+	closeErr := b.f.Close()
+	switch {
+	case flushErr != nil:
+		return flushErr
+	case b.sweeperErr != nil:
+		return b.sweeperErr
+	default:
+		return closeErr
+	}
 }
 
 func (b *SpanBuffer) runSweeper() {
@@ -523,6 +532,7 @@ func (b *SpanBuffer) runSweeper() {
 			// Read header under mu.
 			var hdr [hdrSize]byte
 			if _, err := b.f.ReadAt(hdr[:], rHead); err != nil {
+				b.sweeperErr = fmt.Errorf("sweeper header read at %d: %w", rHead, err)
 				b.mu.Unlock()
 				return
 			}
@@ -556,6 +566,7 @@ func (b *SpanBuffer) runSweeper() {
 					if cap(*pb) <= maxPoolPayload {
 						payloadPool.Put(pb)
 					}
+					b.sweeperErr = fmt.Errorf("sweeper payload read at %d: %w", rHead+hdrSize, err)
 					b.mu.Unlock()
 					return
 				}
