@@ -91,10 +91,7 @@ func newBuf(t *testing.T, maxBytes int64, decisionWait time.Duration, col *colle
 	}
 	stageCap := buffer.DefaultStageCap
 	if maxBytes < int64(stageCap)*2 {
-		stageCap = int(maxBytes / 2)
-		if stageCap < 28*2 {
-			stageCap = 28 * 2
-		}
+		stageCap = max(int(maxBytes/2), 28*2)
 	}
 	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), maxBytes, decisionWait, stageCap, onMatch, evictObs)
 	require.NoError(t, err)
