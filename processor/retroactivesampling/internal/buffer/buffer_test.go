@@ -262,7 +262,7 @@ func TestEvictionUnderPressure(t *testing.T) {
 
 	// Fill ring with uninteresting writes pre-aged past decisionWait so the sweeper
 	// discards them immediately when it must make room.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		require.NoError(t, buf.Write(traceA, data, time.Now().Add(-20*time.Second)))
 	}
 
