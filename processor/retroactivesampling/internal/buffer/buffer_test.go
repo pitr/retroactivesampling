@@ -279,6 +279,28 @@ func TestWriteRejectsRecordLargerThanStageCap(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestAddInterestOnStagedRecord: AddInterest fired while a record is in stage;
+// closing the buffer must flush the stage and let the sweeper deliver before
+// returning.
+func TestAddInterestOnStagedRecord(t *testing.T) {
+	col := newCollector()
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), 1<<20, 5*time.Second, buffer.DefaultStageCap, col.onMatch, nil)
+	require.NoError(t, err)
+
+	data := marshalT(t, singleSpanTraces(traceA, ptrace.StatusCodeOk, 100))
+	require.NoError(t, buf.Write(traceA, data, time.Now()))
+	// Record is in stage; AddInterest will flush it.
+
+	buf.AddInterest(traceA)
+
+	// Close should ensure the sweeper completes any pending delivery before returning.
+	require.NoError(t, buf.Close())
+
+	chunks := col.get(traceA)
+	assert.Len(t, chunks, 1)
+	assert.Equal(t, data, chunks[0])
+}
+
 // TestEvictionUnderPressure: when ring is full the writer unblocks after sweep.
 // Uses an explicit one-record stageCap so every Write triggers a flush, making
 // the disk-full path observable in tests.

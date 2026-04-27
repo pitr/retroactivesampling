@@ -478,23 +478,21 @@ func (b *SpanBuffer) Close() error {
 
 func (b *SpanBuffer) runSweeper() {
 	defer close(b.sweeperDone)
+	closing := false
 	for {
-		select {
-		case <-b.wakeC:
-		case <-b.closeC:
-			return
+		if !closing {
+			select {
+			case <-b.wakeC:
+			case <-b.closeC:
+				closing = true
+			}
 		}
 
 		// Drain pass: walk on-disk records, delivering interesting ones and
-		// dropping uninteresting ones. Each record is claimed (rHead advanced
-		// under mu) before we release mu for the user callback, so writer
-		// eviction cannot advance past us mid-delivery.
+		// dropping uninteresting ones. Sweeper "claims" each record (advance
+		// rHead under mu) before releasing mu for the user callback.
 		for {
 			b.mu.Lock()
-			if b.closed {
-				b.mu.Unlock()
-				return
-			}
 			diskUsed := b.used - int64(len(b.stage))
 			if diskUsed <= 0 {
 				b.mu.Unlock()
@@ -522,7 +520,6 @@ func (b *SpanBuffer) runSweeper() {
 			dataLen := int64(binary.BigEndian.Uint32(hdr[24:28]))
 			recSize := hdrSize + dataLen
 
-			// Skip-record (zero traceID).
 			if tid.IsEmpty() {
 				b.used -= recSize
 				b.rHead += recSize
@@ -544,8 +541,6 @@ func (b *SpanBuffer) runSweeper() {
 				} else {
 					*pb = (*pb)[:dataLen]
 				}
-				// Read payload under mu. Writer cannot Pwrite to this offset
-				// concurrently because mu is held.
 				if _, err := b.f.ReadAt(*pb, rHead+hdrSize); err != nil {
 					if cap(*pb) <= maxPoolPayload {
 						payloadPool.Put(pb)
@@ -555,8 +550,6 @@ func (b *SpanBuffer) runSweeper() {
 				}
 			}
 
-			// Claim the record: advance rHead and used under mu before
-			// releasing for the callback.
 			insertedAt := time.Unix(0, int64(binary.BigEndian.Uint64(hdr[16:24])))
 			b.used -= recSize
 			b.rHead += recSize
@@ -573,6 +566,10 @@ func (b *SpanBuffer) runSweeper() {
 					payloadPool.Put(pb)
 				}
 			}
+		}
+
+		if closing {
+			return
 		}
 	}
 }
