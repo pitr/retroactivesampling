@@ -27,11 +27,12 @@ import (
 )
 
 var (
-	dst        = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
-	server     = flag.String("serve", "0.0.0.0:5000", "OTLP gRPC server to listen to")
-	rate       = flag.Float64("rate", 10, "traces/sec")
-	svcCount   = flag.Int("services", 10, "number of services per trace")
-	reportFreq = flag.Int("report-rate", 10, "print report frequency in seconds")
+	dst          = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
+	server       = flag.String("serve", "0.0.0.0:5000", "OTLP gRPC server to listen to")
+	rate         = flag.Float64("rate", 10, "traces/sec")
+	svcCount     = flag.Int("services", 10, "number of services per trace")
+	reportFreq   = flag.Int("report-rate", 10, "print report frequency in seconds")
+	traceTimeout = flag.Int("trace-timeout", 30, "seconds before an un-completed trace is declared incomplete")
 )
 
 type counter struct{ n atomic.Int64 }
@@ -102,8 +103,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	counter := &counter{}
-	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, counter)
+	outBytes := &counter{}
+	idGen := &seqIDGen{}
+	ring := newRing(*rate, *traceTimeout)
+	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, outBytes, idGen)
 	defer func() {
 		for _, tp := range providers {
 			_ = tp.Shutdown(ctx)
@@ -113,11 +116,10 @@ func main() {
 	go func() {
 		t := time.NewTicker(time.Duration(*reportFreq) * time.Second)
 		for range t.C {
-			fmt.Println("out:", prettyRate(counter.n.Swap(0), int64(*reportFreq)))
+			fmt.Println("out:", prettyRate(outBytes.n.Swap(0), int64(*reportFreq)))
 		}
 	}()
 
-	// Batch multiple emits per tick: OS timer fires at most ~1000x/sec.
 	const timerHz = 1000.0
 	batchSize := int(math.Ceil(*rate / timerHz))
 	tickInterval := time.Duration(float64(time.Second) / *rate * float64(batchSize))
@@ -128,7 +130,7 @@ func main() {
 		select {
 		case <-tick.C:
 			for range batchSize {
-				go emit(ctx, tracers)
+				go emit(ctx, tracers, ring)
 			}
 		case <-ctx.Done():
 			return
@@ -150,7 +152,7 @@ func prettyRate(bytes, secs int64) string {
 	}
 }
 
-func setup(ctx context.Context, dst []string, n int, counter *counter) ([]trace.Tracer, []*sdktrace.TracerProvider) {
+func setup(ctx context.Context, dst []string, n int, counter *counter, idGen *seqIDGen) ([]trace.Tracer, []*sdktrace.TracerProvider) {
 	tracers := make([]trace.Tracer, n)
 	providers := make([]*sdktrace.TracerProvider, n)
 	for i := range n {
@@ -180,18 +182,27 @@ func setup(ctx context.Context, dst []string, n int, counter *counter) ([]trace.
 		res, _ := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))
 		tp := sdktrace.NewTracerProvider(
 			sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exp)),
-			sdktrace.WithResource(res))
+			sdktrace.WithResource(res),
+			sdktrace.WithIDGenerator(idGen),
+		)
 		providers[i], tracers[i] = tp, tp.Tracer("tracegen")
 	}
 	return tracers, providers
 }
 
-func emit(ctx context.Context, tracers []trace.Tracer) {
+func emit(ctx context.Context, tracers []trace.Tracer, ring *traceRing) {
 	isErr := rand.Float64() < 0.01
 	errSvc := rand.IntN(len(tracers))
 
 	ctx, root := tracers[0].Start(ctx, "request")
 	defer root.End()
+
+	tid := root.SpanContext().TraceID()
+	seqID := binary.BigEndian.Uint64(tid[8:])
+	slot := &ring.slots[seqID&ring.mask]
+	slot.isError.Store(isErr)
+	slot.generatedAt.Store(time.Now().UnixNano())
+
 	if isErr && errSvc == 0 {
 		root.SetStatus(codes.Error, "injected error")
 	}
