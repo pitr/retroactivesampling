@@ -160,6 +160,8 @@ func nextPow2(n uint64) uint64 {
 }
 
 func newRing(rate float64, timeoutSecs int) *traceRing {
+	// 4x headroom ensures the sweeper clears a slot before the generator
+	// can wrap around and reuse it within one timeout window.
 	n := uint64(rate) * uint64(timeoutSecs) * 4
 	if n < 1024 {
 		n = 1024
@@ -176,6 +178,8 @@ func sweep(ring *traceRing, frontier uint64, now time.Time, timeoutNs int64, svc
 	for id := *sweepHead; id < frontier; id++ {
 		slot := &ring.slots[id&ring.mask]
 		gen := slot.generatedAt.Load()
+		// break (not continue): IDs are sequential so generatedAt is
+		// monotonically non-decreasing — nothing beyond is older either.
 		if gen == 0 || nowNs-gen < timeoutNs {
 			break
 		}
@@ -308,6 +312,8 @@ func emit(ctx context.Context, tracers []trace.Tracer, ring *traceRing) {
 	tid := root.SpanContext().TraceID()
 	seqID := binary.BigEndian.Uint64(tid[8:])
 	slot := &ring.slots[seqID&ring.mask]
+	// isError must be written before generatedAt: the sweeper uses
+	// generatedAt != 0 as the signal that the slot is fully initialized.
 	slot.isError.Store(isErr)
 	slot.generatedAt.Store(time.Now().UnixNano())
 

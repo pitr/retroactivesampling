@@ -144,7 +144,7 @@ func TestSweep(t *testing.T) {
 	ring.slots[2].isError.Store(false)
 	ring.slots[2].spanCount.Store(0)
 
-	// Slot 3: error trace, complete (3 of 3 spans)
+	// Slot 3: error trace, complete (3 of 3 spans) — not counted in incomplete
 	ring.slots[3].generatedAt.Store(old)
 	ring.slots[3].isError.Store(true)
 	ring.slots[3].spanCount.Store(3)
