@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
@@ -44,6 +46,70 @@ func (c *counter) HandleRPC(_ context.Context, s stats.RPCStats) {
 	if p, ok := s.(*stats.OutPayload); ok {
 		c.n.Add(int64(p.WireLength))
 	}
+}
+
+type inCounter struct{ n atomic.Int64 }
+
+func (c *inCounter) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context   { return ctx }
+func (c *inCounter) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
+func (c *inCounter) HandleConn(context.Context, stats.ConnStats)                       {}
+func (c *inCounter) HandleRPC(_ context.Context, s stats.RPCStats) {
+	if p, ok := s.(*stats.InPayload); ok {
+		c.n.Add(int64(p.WireLength))
+	}
+}
+
+type traceListener struct {
+	coltracepb.UnimplementedTraceServiceServer
+	ring     *traceRing
+	svcCount int
+	bytesIn  inCounter
+}
+
+func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
+	now := time.Now().UnixNano()
+	for _, rs := range req.GetResourceSpans() {
+		for _, ss := range rs.GetScopeSpans() {
+			for _, s := range ss.GetSpans() {
+				tid := s.GetTraceId()
+				if len(tid) != 16 {
+					continue
+				}
+				for _, b := range tid[:8] {
+					if b != 0 {
+						log.Printf("foreign span traceID prefix: %x", tid[:8])
+						goto nextSpan
+					}
+				}
+				{
+					seqID := binary.BigEndian.Uint64(tid[8:])
+					slot := &l.ring.slots[seqID&l.ring.mask]
+					slot.firstSeen.CompareAndSwap(0, now)
+					slot.spanCount.Add(1)
+				}
+			nextSpan:
+			}
+		}
+	}
+	return &coltracepb.ExportTraceServiceResponse{}, nil
+}
+
+func startListener(ctx context.Context, addr string, l *traceListener) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listener: %v", err)
+	}
+	gs := grpc.NewServer(grpc.StatsHandler(&l.bytesIn))
+	coltracepb.RegisterTraceServiceServer(gs, l)
+	go func() {
+		<-ctx.Done()
+		gs.GracefulStop()
+	}()
+	go func() {
+		if err := gs.Serve(lis); err != nil {
+			log.Printf("listener stopped: %v", err)
+		}
+	}()
 }
 
 type seqIDGen struct{ counter atomic.Uint64 }
@@ -106,6 +172,8 @@ func main() {
 	outBytes := &counter{}
 	idGen := &seqIDGen{}
 	ring := newRing(*rate, *traceTimeout)
+	listener := &traceListener{ring: ring, svcCount: *svcCount}
+	startListener(ctx, *server, listener)
 	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, outBytes, idGen)
 	defer func() {
 		for _, tp := range providers {

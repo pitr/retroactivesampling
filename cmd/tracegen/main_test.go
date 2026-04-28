@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"testing"
+
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracepb    "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 func TestNextPow2(t *testing.T) {
@@ -47,6 +50,58 @@ func TestSeqIDGen(t *testing.T) {
 	}
 	if sid0 == sid1 {
 		t.Error("span IDs should differ between calls")
+	}
+}
+
+func TestListenerExport(t *testing.T) {
+	ring := newRing(10, 30)
+	l := &traceListener{ring: ring, svcCount: 3}
+
+	// Trace with seqID=5, foreign upper bytes zero, 2 spans received
+	var tid [16]byte
+	binary.BigEndian.PutUint64(tid[8:], 5)
+
+	req := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{
+					{TraceId: tid[:]},
+					{TraceId: tid[:]},
+				},
+			}},
+		}},
+	}
+
+	_, err := l.Export(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slot := &ring.slots[5&ring.mask]
+	if got := slot.spanCount.Load(); got != 2 {
+		t.Errorf("spanCount = %d, want 2", got)
+	}
+	if slot.firstSeen.Load() == 0 {
+		t.Error("firstSeen not set")
+	}
+
+	// Foreign span (upper 8 bytes non-zero) must be ignored
+	var foreignTid [16]byte
+	foreignTid[0] = 0xFF
+	binary.BigEndian.PutUint64(foreignTid[8:], 99)
+	req2 := &coltracepb.ExportTraceServiceRequest{
+		ResourceSpans: []*tracepb.ResourceSpans{{
+			ScopeSpans: []*tracepb.ScopeSpans{{
+				Spans: []*tracepb.Span{{TraceId: foreignTid[:]}},
+			}},
+		}},
+	}
+	_, err = l.Export(context.Background(), req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ring.slots[99&ring.mask].spanCount.Load() != 0 {
+		t.Error("foreign span should not update ring")
 	}
 }
 
