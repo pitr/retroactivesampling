@@ -56,7 +56,7 @@ func TestSeqIDGen(t *testing.T) {
 
 func TestListenerExport(t *testing.T) {
 	ring := newRing(10, 30)
-	l := &traceListener{ring: ring, svcCount: 3}
+	l := &traceListener{ring: ring}
 
 	// Trace with seqID=5, foreign upper bytes zero, 2 spans received
 	var tid [16]byte

@@ -61,9 +61,8 @@ func (c *inCounter) HandleRPC(_ context.Context, s stats.RPCStats) {
 
 type traceListener struct {
 	coltracepb.UnimplementedTraceServiceServer
-	ring     *traceRing
-	svcCount int
-	bytesIn  inCounter
+	ring    *traceRing
+	bytesIn inCounter
 }
 
 func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
@@ -180,6 +179,7 @@ func sweep(ring *traceRing, frontier uint64, now time.Time, timeoutNs int64, svc
 		gen := slot.generatedAt.Load()
 		// break (not continue): IDs are sequential so generatedAt is
 		// monotonically non-decreasing — nothing beyond is older either.
+		// nowNs-gen is safe: gen is always from time.Now() so gen <= nowNs.
 		if gen == 0 || nowNs-gen < timeoutNs {
 			break
 		}
@@ -209,7 +209,7 @@ func main() {
 	outBytes := &counter{}
 	idGen := &seqIDGen{}
 	ring := newRing(*rate, *traceTimeout)
-	listener := &traceListener{ring: ring, svcCount: *svcCount}
+	listener := &traceListener{ring: ring}
 	startListener(ctx, *server, listener)
 	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, outBytes, idGen)
 	defer func() {
