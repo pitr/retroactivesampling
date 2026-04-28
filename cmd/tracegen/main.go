@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -26,7 +27,8 @@ import (
 )
 
 var (
-	endpoints  = flag.String("endpoints", "localhost:4317,localhost:4318", "comma separated OTLP gRPC endpoints")
+	dst        = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
+	server     = flag.String("serve", "0.0.0.0:5000", "OTLP gRPC server to listen to")
 	rate       = flag.Float64("rate", 10, "traces/sec")
 	svcCount   = flag.Int("services", 10, "number of services per trace")
 	reportFreq = flag.Int("report-rate", 10, "print report frequency in seconds")
@@ -43,13 +45,65 @@ func (c *counter) HandleRPC(_ context.Context, s stats.RPCStats) {
 	}
 }
 
+type seqIDGen struct{ counter atomic.Uint64 }
+
+func (g *seqIDGen) NewIDs(_ context.Context) (trace.TraceID, trace.SpanID) {
+	seq := g.counter.Add(1) - 1
+	var tid trace.TraceID
+	binary.BigEndian.PutUint64(tid[8:], seq)
+	var sid trace.SpanID
+	binary.BigEndian.PutUint64(sid[:], rand.Uint64())
+	return tid, sid
+}
+
+func (g *seqIDGen) NewSpanID(_ context.Context, _ trace.TraceID) trace.SpanID {
+	var sid trace.SpanID
+	binary.BigEndian.PutUint64(sid[:], rand.Uint64())
+	return sid
+}
+
+type traceSlot struct {
+	generatedAt atomic.Int64 // unix nanos; 0 = unused
+	firstSeen   atomic.Int64 // unix nanos; 0 = not yet received
+	spanCount   atomic.Int32
+	isError     atomic.Bool
+}
+
+type traceRing struct {
+	slots []traceSlot
+	mask  uint64
+}
+
+func nextPow2(n uint64) uint64 {
+	if n == 0 {
+		return 1
+	}
+	n--
+	n |= n >> 1
+	n |= n >> 2
+	n |= n >> 4
+	n |= n >> 8
+	n |= n >> 16
+	n |= n >> 32
+	return n + 1
+}
+
+func newRing(rate float64, timeoutSecs int) *traceRing {
+	n := uint64(rate) * uint64(timeoutSecs) * 4
+	if n < 1024 {
+		n = 1024
+	}
+	n = nextPow2(n)
+	return &traceRing{slots: make([]traceSlot, n), mask: n - 1}
+}
+
 func main() {
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	counter := &counter{}
-	tracers, providers := setup(ctx, strings.Split(*endpoints, ","), *svcCount, counter)
+	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, counter)
 	defer func() {
 		for _, tp := range providers {
 			_ = tp.Shutdown(ctx)
@@ -96,12 +150,12 @@ func prettyRate(bytes, secs int64) string {
 	}
 }
 
-func setup(ctx context.Context, endpoints []string, n int, counter *counter) ([]trace.Tracer, []*sdktrace.TracerProvider) {
+func setup(ctx context.Context, dst []string, n int, counter *counter) ([]trace.Tracer, []*sdktrace.TracerProvider) {
 	tracers := make([]trace.Tracer, n)
 	providers := make([]*sdktrace.TracerProvider, n)
 	for i := range n {
 		exp, err := otlptracegrpc.New(ctx,
-			otlptracegrpc.WithEndpoint(endpoints[i%len(endpoints)]),
+			otlptracegrpc.WithEndpoint(dst[i%len(dst)]),
 			otlptracegrpc.WithInsecure(),
 			otlptracegrpc.WithDialOption(
 				grpc.WithStatsHandler(counter),
@@ -121,7 +175,7 @@ func setup(ctx context.Context, endpoints []string, n int, counter *counter) ([]
 				}),
 			))
 		if err != nil {
-			log.Fatalf("failed to create exporter for %s: %v", endpoints[i%len(endpoints)], err)
+			log.Fatalf("failed to create exporter for %s: %v", dst[i%len(dst)], err)
 		}
 		res, _ := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))
 		tp := sdktrace.NewTracerProvider(
