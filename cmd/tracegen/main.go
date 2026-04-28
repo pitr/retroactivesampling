@@ -120,6 +120,7 @@ func main() {
 		}
 	}()
 
+	// Batch multiple emits per tick: OS timer fires at most ~1000x/sec.
 	const timerHz = 1000.0
 	batchSize := int(math.Ceil(*rate / timerHz))
 	tickInterval := time.Duration(float64(time.Second) / *rate * float64(batchSize))
