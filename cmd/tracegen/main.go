@@ -68,6 +68,7 @@ type traceListener struct {
 
 func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
 	now := time.Now().UnixNano()
+	var foreign int
 	for _, rs := range req.GetResourceSpans() {
 		for _, ss := range rs.GetScopeSpans() {
 			for _, s := range ss.GetSpans() {
@@ -77,7 +78,7 @@ func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceSer
 				}
 				for _, b := range tid[:8] {
 					if b != 0 {
-						log.Printf("foreign span traceID prefix: %x", tid[:8])
+						foreign++
 						goto nextSpan
 					}
 				}
@@ -90,6 +91,9 @@ func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceSer
 			nextSpan:
 			}
 		}
+	}
+	if foreign > 0 {
+		log.Printf("ignored %d foreign spans in Export", foreign)
 	}
 	return &coltracepb.ExportTraceServiceResponse{}, nil
 }
