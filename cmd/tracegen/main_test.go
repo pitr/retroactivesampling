@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"testing"
+	"time"
 
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb    "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -119,5 +120,60 @@ func TestNewRing(t *testing.T) {
 	r2 := newRing(1, 1)
 	if len(r2.slots) != 1024 {
 		t.Errorf("minimum ring size = %d, want 1024", len(r2.slots))
+	}
+}
+
+func TestSweep(t *testing.T) {
+	ring := newRing(10, 30)
+	svcCount := 3
+	timeoutNs := int64(30 * time.Second)
+	old := time.Now().Add(-60 * time.Second).UnixNano()
+
+	// Slot 0: error trace, incomplete (2 of 3 spans)
+	ring.slots[0].generatedAt.Store(old)
+	ring.slots[0].isError.Store(true)
+	ring.slots[0].spanCount.Store(2)
+
+	// Slot 1: non-error trace, unexpected ingestion
+	ring.slots[1].generatedAt.Store(old)
+	ring.slots[1].isError.Store(false)
+	ring.slots[1].spanCount.Store(1)
+
+	// Slot 2: non-error trace, correctly not ingested
+	ring.slots[2].generatedAt.Store(old)
+	ring.slots[2].isError.Store(false)
+	ring.slots[2].spanCount.Store(0)
+
+	// Slot 3: error trace, complete (3 of 3 spans)
+	ring.slots[3].generatedAt.Store(old)
+	ring.slots[3].isError.Store(true)
+	ring.slots[3].spanCount.Store(3)
+
+	// Slot 4: too recent — must not be swept
+	ring.slots[4].generatedAt.Store(time.Now().Add(-10 * time.Second).UnixNano())
+	ring.slots[4].isError.Store(true)
+	ring.slots[4].spanCount.Store(0)
+
+	var sweepHead uint64
+	incomplete, unexpected := sweep(ring, 5, time.Now(), timeoutNs, svcCount, &sweepHead)
+
+	if incomplete != 1 {
+		t.Errorf("incomplete = %d, want 1", incomplete)
+	}
+	if unexpected != 1 {
+		t.Errorf("unexpected = %d, want 1", unexpected)
+	}
+	if sweepHead != 4 {
+		t.Errorf("sweepHead = %d, want 4", sweepHead)
+	}
+	// Slots 0-3 must be zeroed
+	for i := range 4 {
+		if ring.slots[i].generatedAt.Load() != 0 {
+			t.Errorf("slot %d generatedAt not zeroed after sweep", i)
+		}
+	}
+	// Slot 4 must be untouched
+	if ring.slots[4].generatedAt.Load() == 0 {
+		t.Error("slot 4 should not be swept (too recent)")
 	}
 }

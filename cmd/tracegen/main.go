@@ -168,6 +168,35 @@ func newRing(rate float64, timeoutSecs int) *traceRing {
 	return &traceRing{slots: make([]traceSlot, n), mask: n - 1}
 }
 
+// sweep walks ring slots from *sweepHead up to frontier, classifying and zeroing
+// all slots whose generatedAt age exceeds timeoutNs. Returns counts of incomplete
+// error traces and unexpectedly ingested non-error traces found this pass.
+func sweep(ring *traceRing, frontier uint64, now time.Time, timeoutNs int64, svcCount int, sweepHead *uint64) (incomplete, unexpected int) {
+	nowNs := now.UnixNano()
+	for id := *sweepHead; id < frontier; id++ {
+		slot := &ring.slots[id&ring.mask]
+		gen := slot.generatedAt.Load()
+		if gen == 0 || nowNs-gen < timeoutNs {
+			break
+		}
+		sc := int(slot.spanCount.Load())
+		isErr := slot.isError.Load()
+		switch {
+		case isErr && sc < svcCount:
+			incomplete++
+		case !isErr && sc > 0:
+			log.Printf("unexpected ingestion seqID=%d spans=%d", id, sc)
+			unexpected++
+		}
+		slot.spanCount.Store(0)
+		slot.firstSeen.Store(0)
+		slot.isError.Store(false)
+		slot.generatedAt.Store(0)
+		*sweepHead = id + 1
+	}
+	return
+}
+
 func main() {
 	flag.Parse()
 
@@ -187,8 +216,14 @@ func main() {
 
 	go func() {
 		t := time.NewTicker(time.Duration(*reportFreq) * time.Second)
+		var sweepHead uint64
 		for range t.C {
-			fmt.Println("out:", prettyRate(outBytes.n.Swap(0), int64(*reportFreq)))
+			incomplete, unexpected := sweep(ring, idGen.counter.Load(), time.Now(),
+				int64(*traceTimeout)*int64(time.Second), *svcCount, &sweepHead)
+			fmt.Printf("out: %s  in: %s  incomplete: %d  unexpected: %d\n",
+				prettyRate(outBytes.n.Swap(0), int64(*reportFreq)),
+				prettyRate(listener.bytesIn.n.Swap(0), int64(*reportFreq)),
+				incomplete, unexpected)
 		}
 	}()
 
