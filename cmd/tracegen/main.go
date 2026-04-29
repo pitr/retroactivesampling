@@ -1,27 +1,36 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
 	"math"
+	"math/bits"
 	"math/rand/v2"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
-	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	v1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
@@ -29,205 +38,197 @@ import (
 )
 
 var (
-	dst          = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
-	server       = flag.String("serve", "0.0.0.0:5000", "OTLP gRPC server to listen to")
-	rate         = flag.Float64("rate", 10, "traces/sec")
-	svcCount     = flag.Int("services", 10, "number of services per trace")
-	reportFreq   = flag.Int("report-rate", 10, "print report frequency in seconds")
-	traceTimeout = flag.Int("trace-timeout", 30, "seconds before an un-completed trace is declared incomplete")
+	dst         = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
+	server      = flag.String("listen", "0.0.0.0:9000", "OTLP gRPC endpoint to listen to (no TLS!)")
+	metricsAddr = flag.String("metrics", "0.0.0.0:2112", "Prometheus metrics HTTP endpoint address")
+	rate        = flag.Float64("rate", 10, "traces/sec")
+	svcCount    = flag.Int("services", 10, "number of services per trace")
+	waitTime    = flag.Int("wait", 20, "seconds to wait for a trace before giving up")
+	stopTime    = flag.Int("stop", 0, "seconds to run for, 0 means forever")
+
+	BytesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_bytes_total", Help: "Bytes out transferred."}, []string{"direction"})
+	SpansGot   = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_spans_received_total", Help: "Spans received."}, []string{"reason"})
+	TracesSent = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_traces_sent_total", Help: "Total traces emitted."}, []string{"error"})
+	TracesGot  = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_traces_received_total", Help: "Traces received."}, []string{"completeness"})
+
+	traces  = map[uint32]*list.Element{}
+	tracesQ list.List
+	mu      sync.Mutex
+
+	code = (uint8)(rand.Uint32N(math.MaxUint8)) // random code for the current session
 )
 
-type counter struct{ n atomic.Int64 }
+type traceID struct {
+	id    uint32 // actual ID
+	code  uint8  // unique code for this session, to weed out foreign spans
+	isErr bool   // this trace should be error
+}
+
+// check that traceID is within TraceID size
+var _ [16 - unsafe.Sizeof(traceID{})]byte
+
+type counter struct{ in, out prometheus.Counter }
 
 func (c *counter) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context   { return ctx }
 func (c *counter) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
 func (c *counter) HandleConn(context.Context, stats.ConnStats)                       {}
 func (c *counter) HandleRPC(_ context.Context, s stats.RPCStats) {
-	if p, ok := s.(*stats.OutPayload); ok {
-		c.n.Add(int64(p.WireLength))
+	if p, ok := s.(*stats.OutPayload); ok && c.out != nil {
+		c.out.Add(float64(p.WireLength))
 	}
-}
-
-type inCounter struct{ n atomic.Int64 }
-
-func (c *inCounter) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context   { return ctx }
-func (c *inCounter) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
-func (c *inCounter) HandleConn(context.Context, stats.ConnStats)                       {}
-func (c *inCounter) HandleRPC(_ context.Context, s stats.RPCStats) {
-	if p, ok := s.(*stats.InPayload); ok {
-		c.n.Add(int64(p.WireLength))
+	if p, ok := s.(*stats.InPayload); ok && c.in != nil {
+		c.in.Add(float64(p.WireLength))
 	}
-}
-
-type traceListener struct {
-	coltracepb.UnimplementedTraceServiceServer
-	ring    *traceRing
-	bytesIn inCounter
-}
-
-func (l *traceListener) Export(_ context.Context, req *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
-	now := time.Now().UnixNano()
-	var foreign int
-	for _, rs := range req.GetResourceSpans() {
-		for _, ss := range rs.GetScopeSpans() {
-			for _, s := range ss.GetSpans() {
-				tid := s.GetTraceId()
-				if len(tid) != 16 {
-					continue
-				}
-				for _, b := range tid[:8] {
-					if b != 0 {
-						foreign++
-						goto nextSpan
-					}
-				}
-				{
-					seqID := binary.BigEndian.Uint64(tid[8:])
-					slot := &l.ring.slots[seqID&l.ring.mask]
-					slot.firstSeen.CompareAndSwap(0, now)
-					slot.spanCount.Add(1)
-				}
-			nextSpan:
-			}
-		}
-	}
-	if foreign > 0 {
-		log.Printf("ignored %d foreign spans in Export", foreign)
-	}
-	return &coltracepb.ExportTraceServiceResponse{}, nil
-}
-
-func startListener(ctx context.Context, addr string, l *traceListener) {
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("listener: %v", err)
-	}
-	gs := grpc.NewServer(grpc.StatsHandler(&l.bytesIn))
-	coltracepb.RegisterTraceServiceServer(gs, l)
-	go func() {
-		<-ctx.Done()
-		gs.GracefulStop()
-	}()
-	go func() {
-		if err := gs.Serve(lis); err != nil {
-			log.Printf("listener stopped: %v", err)
-		}
-	}()
-}
-
-type seqIDGen struct{ counter atomic.Uint64 }
-
-func (g *seqIDGen) NewIDs(_ context.Context) (trace.TraceID, trace.SpanID) {
-	seq := g.counter.Add(1) - 1
-	var tid trace.TraceID
-	binary.BigEndian.PutUint64(tid[8:], seq)
-	var sid trace.SpanID
-	binary.BigEndian.PutUint64(sid[:], rand.Uint64())
-	return tid, sid
-}
-
-func (g *seqIDGen) NewSpanID(_ context.Context, _ trace.TraceID) trace.SpanID {
-	var sid trace.SpanID
-	binary.BigEndian.PutUint64(sid[:], rand.Uint64())
-	return sid
 }
 
 type traceSlot struct {
-	generatedAt atomic.Int64 // unix nanos; 0 = unused
-	firstSeen   atomic.Int64 // unix nanos; 0 = not yet received
-	spanCount   atomic.Int32
-	isError     atomic.Bool
+	id    uint32 // actual ID
+	age   int64  // unix time in seconds
+	spans uint64 // bits per span (service 5 is in bit 5)
 }
 
-type traceRing struct {
-	slots []traceSlot
-	mask  uint64
+type traceListener struct {
+	v1.UnimplementedTraceServiceServer
 }
 
-func nextPow2(n uint64) uint64 {
-	if n == 0 {
-		return 1
+func (l *traceListener) Export(_ context.Context, req *v1.ExportTraceServiceRequest) (*v1.ExportTraceServiceResponse, error) {
+	var foreign, nonError, corrupted, dup, late, valid float64
+	for _, rs := range req.GetResourceSpans() {
+		for _, ss := range rs.GetScopeSpans() {
+			for _, s := range ss.GetSpans() {
+				trace := *(*traceID)(unsafe.Pointer(&s.GetTraceId()[0]))
+				if trace.code != code {
+					foreign++
+					continue
+				}
+				if !trace.isErr {
+					nonError++
+					continue
+				}
+				var mask uint64
+				for _, a := range s.GetAttributes() {
+					if a.Key == "my.seq" {
+						seq := a.Value.GetIntValue()
+						if seq < 0 || seq >= int64(*svcCount) {
+							corrupted++
+							continue
+						}
+						mask = uint64(1) << seq
+					}
+				}
+				if mask == 0 {
+					corrupted++
+					continue
+				}
+
+				// TODO add more validation, span should be exactly the same as what we sent
+
+				mu.Lock()
+				e, ok := traces[trace.id]
+				if !ok {
+					mu.Unlock()
+					late++
+					continue
+				}
+
+				slot := e.Value.(*traceSlot)
+				if slot.spans&mask != 0 {
+					mu.Unlock()
+					dup++
+					continue
+				} else {
+					slot.spans |= mask
+				}
+				mu.Unlock()
+				valid++
+			}
+		}
 	}
-	n--
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
-	n |= n >> 32
-	return n + 1
+	SpansGot.WithLabelValues("foreign").Add(foreign)     // came from another source
+	SpansGot.WithLabelValues("non-error").Add(nonError)  // received a span from a non-error trace
+	SpansGot.WithLabelValues("corrupted").Add(corrupted) // corrupted span, something is wrong
+	SpansGot.WithLabelValues("dup").Add(dup)             // same span received more than once
+	SpansGot.WithLabelValues("late").Add(late)           // span received, but took longer than -wait argument
+	SpansGot.WithLabelValues("expected").Add(valid)
+
+	return &v1.ExportTraceServiceResponse{}, nil
 }
 
-func newRing(rate float64, timeoutSecs int) *traceRing {
-	// 4x headroom ensures the sweeper clears a slot before the generator
-	// can wrap around and reuse it within one timeout window.
-	n := uint64(rate) * uint64(timeoutSecs) * 4
-	if n < 1024 {
-		n = 1024
+type ctxKey int
+
+const isErrKey ctxKey = iota
+
+type TraceIDGen struct{ counter atomic.Uint32 }
+
+func (g *TraceIDGen) NewIDs(ctx context.Context) (tid trace.TraceID, sid trace.SpanID) {
+	isErr, ok := ctx.Value(isErrKey).(bool)
+	if !ok {
+		log.Fatal("TraceIDGen used without setting context key")
 	}
-	n = nextPow2(n)
-	return &traceRing{slots: make([]traceSlot, n), mask: n - 1}
+	*(*traceID)(unsafe.Pointer(&tid[0])) = traceID{id: g.counter.Add(1), code: code, isErr: isErr}
+	binary.BigEndian.PutUint64(sid[:], rand.Uint64())
+	return
 }
 
-// sweep walks ring slots from *sweepHead up to frontier, classifying and zeroing
-// all slots whose generatedAt age exceeds timeoutNs. Returns counts of incomplete
-// error traces and unexpectedly ingested non-error traces found this pass.
-func sweep(ring *traceRing, frontier uint64, now time.Time, timeoutNs int64, svcCount int, sweepHead *uint64) (incomplete, unexpected int) {
-	nowNs := now.UnixNano()
-	for id := *sweepHead; id < frontier; id++ {
-		slot := &ring.slots[id&ring.mask]
-		gen := slot.generatedAt.Load()
-		// break (not continue): IDs are sequential so generatedAt is
-		// monotonically non-decreasing — nothing beyond is older either.
-		// nowNs-gen is safe: gen is always from time.Now() so gen <= nowNs.
-		if gen == 0 || nowNs-gen < timeoutNs {
+func (g *TraceIDGen) NewSpanID(_ context.Context, _ trace.TraceID) trace.SpanID {
+	sid := trace.SpanID{}
+	for {
+		binary.NativeEndian.PutUint64(sid[:], rand.Uint64())
+		if sid.IsValid() {
 			break
 		}
-		sc := int(slot.spanCount.Load())
-		isErr := slot.isError.Load()
-		switch {
-		case isErr && sc < svcCount:
-			incomplete++
-		case !isErr && sc > 0:
-			log.Printf("unexpected ingestion seqID=%d spans=%d", id, sc)
-			unexpected++
-		}
-		slot.spanCount.Store(0)
-		slot.firstSeen.Store(0)
-		slot.isError.Store(false)
-		slot.generatedAt.Store(0)
-		*sweepHead = id + 1
 	}
-	return
+	return sid
 }
 
 func main() {
 	flag.Parse()
 
+	if *svcCount > 64 {
+		log.Fatal("service count above 64 is not supported due to bit twiddling")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	outBytes := &counter{}
-	idGen := &seqIDGen{}
-	ring := newRing(*rate, *traceTimeout)
-	listener := &traceListener{ring: ring}
-	startListener(ctx, *server, listener)
-	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, outBytes, idGen)
+
+	if *stopTime > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*stopTime)*time.Second)
+		defer cancel()
+	}
+
+	idGen := &TraceIDGen{}
+
+	startMetrics(ctx, *metricsAddr) // &listener.bytes, outBytes
+	startListener(ctx, *server)
+	log.Println("server up, sleeping...")
+
+	time.Sleep(5 * time.Second) // sleep before starting
+
+	log.Println("starting...")
+
+	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, idGen)
 	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		for _, tp := range providers {
-			_ = tp.Shutdown(ctx)
+			_ = tp.Shutdown(sctx)
 		}
 	}()
 
 	go func() {
-		t := time.NewTicker(time.Duration(*reportFreq) * time.Second)
-		var sweepHead uint64
-		for range t.C {
-			incomplete, unexpected := sweep(ring, idGen.counter.Load(), time.Now(),
-				int64(*traceTimeout)*int64(time.Second), *svcCount, &sweepHead)
-			fmt.Printf("out: %s  in: %s  incomplete: %d  unexpected: %d\n",
-				prettyRate(outBytes.n.Swap(0), int64(*reportFreq)),
-				prettyRate(listener.bytesIn.n.Swap(0), int64(*reportFreq)),
-				incomplete, unexpected)
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				full, part, none := sweep()
+				TracesGot.WithLabelValues("full").Add(float64(full))
+				TracesGot.WithLabelValues("partial").Add(float64(part))
+				TracesGot.WithLabelValues("none").Add(float64(none))
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -242,7 +243,7 @@ func main() {
 		select {
 		case <-tick.C:
 			for range batchSize {
-				go emit(ctx, tracers, ring)
+				go emit(ctx, tracers)
 			}
 		case <-ctx.Done():
 			return
@@ -250,21 +251,44 @@ func main() {
 	}
 }
 
-func prettyRate(bytes, secs int64) string {
-	bps := float64(bytes) / float64(secs)
-	switch {
-	case bps >= 1e9:
-		return fmt.Sprintf("%.1f GB/s", bps/1e9)
-	case bps >= 1e6:
-		return fmt.Sprintf("%.1f MB/s", bps/1e6)
-	case bps >= 1e3:
-		return fmt.Sprintf("%.1f KB/s", bps/1e3)
-	default:
-		return fmt.Sprintf("%.0f B/s", bps)
+func startListener(ctx context.Context, addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("listener: %v", err)
 	}
+	gs := grpc.NewServer(grpc.StatsHandler(&counter{in: BytesTotal.WithLabelValues("in")}))
+	v1.RegisterTraceServiceServer(gs, &traceListener{})
+	go func() {
+		<-ctx.Done()
+		gs.GracefulStop()
+	}()
+	go func() {
+		log.Printf("grpc listening addr=%s\n", addr)
+		if err := gs.Serve(lis); err != nil {
+			log.Printf("listener stopped: %v", err)
+		}
+	}()
 }
 
-func setup(ctx context.Context, dst []string, n int, counter *counter, idGen *seqIDGen) ([]trace.Tracer, []*sdktrace.TracerProvider) {
+func startMetrics(ctx context.Context, addr string) {
+	prometheus.MustRegister(BytesTotal, SpansGot, TracesGot, TracesSent)
+
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", promhttp.Handler())
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Shutdown(context.Background())
+	}()
+	go func() {
+		log.Printf("metrics listening addr=%s\n", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server: %v", err)
+		}
+	}()
+}
+
+func setup(ctx context.Context, dst []string, n int, idGen *TraceIDGen) ([]trace.Tracer, []*sdktrace.TracerProvider) {
 	tracers := make([]trace.Tracer, n)
 	providers := make([]*sdktrace.TracerProvider, n)
 	for i := range n {
@@ -272,7 +296,7 @@ func setup(ctx context.Context, dst []string, n int, counter *counter, idGen *se
 			otlptracegrpc.WithEndpoint(dst[i%len(dst)]),
 			otlptracegrpc.WithInsecure(),
 			otlptracegrpc.WithDialOption(
-				grpc.WithStatsHandler(counter),
+				grpc.WithStatsHandler(&counter{out: BytesTotal.WithLabelValues("out")}),
 				grpc.WithConnectParams(grpc.ConnectParams{
 					Backoff: backoff.Config{
 						BaseDelay:  500 * time.Millisecond,
@@ -291,7 +315,10 @@ func setup(ctx context.Context, dst []string, n int, counter *counter, idGen *se
 		if err != nil {
 			log.Fatalf("failed to create exporter for %s: %v", dst[i%len(dst)], err)
 		}
-		res, _ := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))
+		res, err := resource.New(ctx, resource.WithAttributes(semconv.ServiceName(fmt.Sprintf("service-%d", i))))
+		if err != nil {
+			log.Fatalf("failed to create exporter for service-%d: %v", i, err)
+		}
 		tp := sdktrace.NewTracerProvider(
 			sdktrace.WithSpanProcessor(sdktrace.NewBatchSpanProcessor(exp)),
 			sdktrace.WithResource(res),
@@ -302,30 +329,64 @@ func setup(ctx context.Context, dst []string, n int, counter *counter, idGen *se
 	return tracers, providers
 }
 
-func emit(ctx context.Context, tracers []trace.Tracer, ring *traceRing) {
+func emit(ctx context.Context, tracers []trace.Tracer) {
 	isErr := rand.Float64() < 0.01
 	errSvc := rand.IntN(len(tracers))
+
+	TracesSent.WithLabelValues(strconv.FormatBool(isErr)).Add(1)
+
+	ctx = context.WithValue(ctx, isErrKey, isErr)
 
 	ctx, root := tracers[0].Start(ctx, "request")
 	defer root.End()
 
-	tid := root.SpanContext().TraceID()
-	seqID := binary.BigEndian.Uint64(tid[8:])
-	slot := &ring.slots[seqID&ring.mask]
-	// isError must be written before generatedAt: the sweeper uses
-	// generatedAt != 0 as the signal that the slot is fully initialized.
-	slot.isError.Store(isErr)
-	slot.generatedAt.Store(time.Now().UnixNano())
+	t := root.SpanContext().TraceID()
+	tid := *(*traceID)(unsafe.Pointer(&t[0]))
+	if isErr {
+		mu.Lock()
+		traces[tid.id] = tracesQ.PushFront(&traceSlot{id: tid.id, age: time.Now().Unix()})
+		mu.Unlock()
+	}
 
 	if isErr && errSvc == 0 {
 		root.SetStatus(codes.Error, "injected error")
 	}
+	root.SetAttributes(attribute.Int("my.seq", 0))
 
 	for i := 1; i < len(tracers); i++ {
 		_, s := tracers[i].Start(ctx, fmt.Sprintf("svc%d.handle", i))
+		s.SetAttributes(attribute.Int("my.seq", i))
 		if isErr && errSvc == i {
 			s.SetStatus(codes.Error, "injected error")
 		}
 		s.End()
+	}
+}
+
+// garbage collect old traces, track stats
+func sweep() (full, part, none int) {
+	now := time.Now().Unix()
+	mu.Lock()
+	defer mu.Unlock()
+
+	for {
+		e := tracesQ.Back()
+		if e == nil {
+			return
+		}
+		s := e.Value.(*traceSlot)
+		if now-s.age < (int64)(*waitTime) {
+			return
+		}
+		delete(traces, s.id)
+		switch bits.OnesCount64(s.spans) {
+		case *svcCount:
+			full++
+		case 0:
+			none++
+		default:
+			part++
+		}
+		tracesQ.Remove(e)
 	}
 }

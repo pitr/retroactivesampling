@@ -32,6 +32,10 @@ exporters:
     verbosity: basic
   otlp_http:
     traces_endpoint: http://localhost:10428/insert/opentelemetry/v1/traces
+  otlp_grpc:
+    endpoint: localhost:9000
+    tls:
+      insecure: true
 
 service:
   extensions: [pprof]
@@ -39,7 +43,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [retroactive_sampling]
-      exporters: [otlp_http]
+      exporters: [otlp_http, otlp_grpc]
   telemetry:
     metrics:
       level: detailed
