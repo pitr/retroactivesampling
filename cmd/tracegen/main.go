@@ -31,6 +31,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 	v1 "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
@@ -82,9 +83,10 @@ func (c *counter) HandleRPC(_ context.Context, s stats.RPCStats) {
 }
 
 type traceSlot struct {
-	id    uint32 // actual ID
-	age   int64  // unix time in seconds
-	spans uint64 // bits per span (service 5 is in bit 5)
+	id     uint32 // actual ID
+	age    int64  // unix time in seconds
+	spans  uint64 // bits per span (service 5 is in bit 5)
+	errSvc int    // which service index has injected error
 }
 
 type traceListener struct {
@@ -105,24 +107,24 @@ func (l *traceListener) Export(_ context.Context, req *v1.ExportTraceServiceRequ
 					nonError++
 					continue
 				}
-				var mask uint64
+				var seq int64 = -1
 				for _, a := range s.GetAttributes() {
 					if a.Key == "my.seq" {
-						seq := a.Value.GetIntValue()
-						if seq < 0 || seq >= int64(*svcCount) {
-							corrupted++
-							continue
-						}
-						mask = uint64(1) << seq
+						seq = a.Value.GetIntValue()
 					}
 				}
-				if mask == 0 {
+				if seq < 0 || seq >= int64(*svcCount) {
+					log.Printf("corrupt: trace=%d got_seq=%d", trace.id, seq)
 					corrupted++
 					continue
 				}
-
-				// TODO add more validation, span should be exactly the same as what we sent
-
+				wantName := fmt.Sprintf("svc%d.handle", seq)
+				if name := s.GetName(); name != wantName {
+					log.Printf("corrupt: trace=%d seq=%d span_name=%q want=%q", trace.id, seq, name, wantName)
+					corrupted++
+					continue
+				}
+				mask := uint64(1) << seq
 				mu.Lock()
 				e, ok := traces[trace.id]
 				if !ok {
@@ -130,15 +132,20 @@ func (l *traceListener) Export(_ context.Context, req *v1.ExportTraceServiceRequ
 					late++
 					continue
 				}
-
 				slot := e.Value.(*traceSlot)
 				if slot.spans&mask != 0 {
 					mu.Unlock()
 					dup++
 					continue
-				} else {
-					slot.spans |= mask
 				}
+				wantErr, gotErr := slot.errSvc == int(seq), s.GetStatus().GetCode() == tracev1.Status_STATUS_CODE_ERROR
+				if wantErr != gotErr {
+					mu.Unlock()
+					log.Printf("corrupt: trace=%d seq=%d status: want_err=%v got=%v", trace.id, seq, wantErr, gotErr)
+					corrupted++
+					continue
+				}
+				slot.spans |= mask
 				mu.Unlock()
 				valid++
 			}
@@ -205,7 +212,7 @@ func main() {
 
 	time.Sleep(5 * time.Second) // sleep before starting
 
-	log.Println("starting...")
+	log.Println("starting")
 
 	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, idGen)
 	defer func() {
@@ -262,8 +269,8 @@ func startListener(ctx context.Context, addr string) {
 		<-ctx.Done()
 		gs.GracefulStop()
 	}()
+	log.Printf("grpc listening addr=%s\n", addr)
 	go func() {
-		log.Printf("grpc listening addr=%s\n", addr)
 		if err := gs.Serve(lis); err != nil {
 			log.Printf("listener stopped: %v", err)
 		}
@@ -280,8 +287,8 @@ func startMetrics(ctx context.Context, addr string) {
 		<-ctx.Done()
 		_ = srv.Shutdown(context.Background())
 	}()
+	log.Printf("metrics listening addr=%s\n", addr)
 	go func() {
-		log.Printf("metrics listening addr=%s\n", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server: %v", err)
 		}
@@ -337,14 +344,14 @@ func emit(ctx context.Context, tracers []trace.Tracer) {
 
 	ctx = context.WithValue(ctx, isErrKey, isErr)
 
-	ctx, root := tracers[0].Start(ctx, "request")
+	ctx, root := tracers[0].Start(ctx, fmt.Sprintf("svc%d.handle", 0))
 	defer root.End()
 
 	t := root.SpanContext().TraceID()
 	tid := *(*traceID)(unsafe.Pointer(&t[0]))
 	if isErr {
 		mu.Lock()
-		traces[tid.id] = tracesQ.PushFront(&traceSlot{id: tid.id, age: time.Now().Unix()})
+		traces[tid.id] = tracesQ.PushFront(&traceSlot{id: tid.id, age: time.Now().Unix(), errSvc: errSvc})
 		mu.Unlock()
 	}
 
