@@ -107,7 +107,7 @@ func TestWrite_full(t *testing.T) {
 	const cs = 128
 	buf := newBuf(t, cs, 2, time.Hour, nil)
 	data := make([]byte, 32)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		require.NoError(t, buf.Write(traceID(), data, time.Now()))
 	}
 	err := buf.Write(traceID(), data, time.Now())
@@ -125,22 +125,23 @@ func TestInterest_basicAddHas(t *testing.T) {
 }
 
 func TestInterest_expiry(t *testing.T) {
-	buf := newBuf(t, 128, 4, 50*time.Millisecond, nil)
+	const dw = 50 * time.Millisecond
+	buf := newBuf(t, 128, 4, dw, nil)
 	id := traceID()
 	buf.AddInterest(id)
 	require.True(t, buf.HasInterest(id))
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(dw + 200*time.Millisecond) // 4x margin against scheduler jitter
 	require.False(t, buf.HasInterest(id))
 }
 
 func TestInterest_renewOnAdd(t *testing.T) {
-	buf := newBuf(t, 128, 4, 80*time.Millisecond, nil)
+	const dw = 200 * time.Millisecond
+	buf := newBuf(t, 128, 4, dw, nil)
 	id := traceID()
 	buf.AddInterest(id)
-	time.Sleep(50 * time.Millisecond)
-	buf.AddInterest(id) // renew
-	time.Sleep(50 * time.Millisecond)
-	// 100ms total; renewed at 50ms → only 50ms since last add < 80ms → still present
+	time.Sleep(100 * time.Millisecond) // half the TTL
+	buf.AddInterest(id)                // renew; clock resets
+	time.Sleep(100 * time.Millisecond) // only 100ms since renewal, 100ms margin remaining
 	require.True(t, buf.HasInterest(id))
 }
 
@@ -206,7 +207,7 @@ func TestSweeper_pressure_eviction(t *testing.T) {
 	// rec3: flush chunk0 (used=128), stageN=60; rec4: stageN=120
 	// rec5: flush chunk1 (used=256), stageN=60; rec6: stageN=120
 	// rec7: flush chunk2 (used=384), stageN=60; rec8: stageN=120
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		require.NoError(t, buf.Write(traceID(), data, now))
 	}
 	// Close flushes stage (chunk3, used=512) then sweeper drains with closed=true.
