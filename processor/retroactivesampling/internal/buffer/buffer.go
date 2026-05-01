@@ -107,10 +107,12 @@ func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 	if el, ok := b.interestEntries[traceID]; ok {
 		b.interestList.MoveToFront(el)
 		el.Value.(*interestEntry).addedAt = time.Now()
+		b.cond.Signal()
 		return
 	}
 	el := b.interestList.PushFront(&interestEntry{id: traceID, addedAt: time.Now()})
 	b.interestEntries[traceID] = el
+	b.cond.Signal()
 }
 
 // HasInterest reports whether traceID is still within its decision window.
@@ -231,7 +233,7 @@ func (b *SpanBuffer) runSweeper() {
 
 			b.mu.Lock()
 			interesting := b.hasInterestLocked(tid)
-			pressure := b.used > b.maxBytes*3/4
+			pressure := b.used > b.maxBytes*3/4 || b.closed
 			b.mu.Unlock()
 
 			age := time.Since(insertedAt)
@@ -263,8 +265,18 @@ func (b *SpanBuffer) runSweeper() {
 			b.used -= int64(b.chunkSize)
 			b.pruneInterestLocked()
 			b.cond.Broadcast()
+		} else {
+			b.cond.Wait() // wait for AfterFunc signal (or Close signal) before re-checking
 		}
 	}
+}
+
+// Flush writes any staged records to the ring buffer. Call after a batch of Write calls.
+func (b *SpanBuffer) Flush() error {
+	if b.stageN == 0 {
+		return nil
+	}
+	return b.flushStage()
 }
 
 // Close flushes any staged records, signals the sweeper to drain, and closes the file.

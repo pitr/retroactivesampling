@@ -117,6 +117,9 @@ func (p *retroactiveProcessor) processTraces(_ context.Context, td ptrace.Traces
 			p.logger.Error("could not store trace locally, dropping", zap.Stringer("trace_id", tid), zap.Error(err))
 		}
 	}
+	if err := p.buf.Flush(); err != nil {
+		p.logger.Error("buffer flush failed", zap.Error(err))
+	}
 	if out.SpanCount() == 0 {
 		return out, processorhelper.ErrSkipProcessingData
 	}
