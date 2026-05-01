@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/expfmt"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -37,6 +39,8 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/stats"
 )
+
+const prestartTime = 5 // seconds to wait before we start sending traces
 
 var (
 	dst         = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
@@ -200,7 +204,7 @@ func main() {
 
 	if *stopTime > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(*stopTime)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(prestartTime+*stopTime)*time.Second)
 		defer cancel()
 	}
 
@@ -210,7 +214,7 @@ func main() {
 	startListener(ctx, *server)
 	log.Println("server up, sleeping...")
 
-	time.Sleep(5 * time.Second) // sleep before starting
+	time.Sleep(prestartTime * time.Second) // sleep before starting
 
 	log.Println("starting")
 
@@ -229,10 +233,7 @@ func main() {
 		for {
 			select {
 			case <-t.C:
-				full, part, none := sweep()
-				TracesGot.WithLabelValues("full").Add(float64(full))
-				TracesGot.WithLabelValues("partial").Add(float64(part))
-				TracesGot.WithLabelValues("none").Add(float64(none))
+				sweep()
 			case <-ctx.Done():
 				return
 			}
@@ -253,7 +254,23 @@ func main() {
 				go emit(ctx, tracers)
 			}
 		case <-ctx.Done():
-			return
+			goto done
+		}
+	}
+done:
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		log.Printf("stop timer fired, waiting %ds for in-flight spans...", *waitTime)
+		time.Sleep(time.Duration(*waitTime) * time.Second)
+		sweep()
+		mfs, err := prometheus.DefaultGatherer.Gather()
+		if err != nil {
+			log.Printf("gather metrics: %v", err)
+		}
+		enc := expfmt.NewEncoder(os.Stdout, expfmt.NewFormat(expfmt.TypeTextPlain))
+		for _, mf := range mfs {
+			if strings.HasPrefix(*mf.Name, "tracegen_") {
+				_ = enc.Encode(mf)
+			}
 		}
 	}
 }
@@ -371,7 +388,8 @@ func emit(ctx context.Context, tracers []trace.Tracer) {
 }
 
 // garbage collect old traces, track stats
-func sweep() (full, part, none int) {
+func sweep() {
+	var full, part, none int
 	now := time.Now().Unix()
 	mu.Lock()
 	defer mu.Unlock()
@@ -379,11 +397,11 @@ func sweep() (full, part, none int) {
 	for {
 		e := tracesQ.Back()
 		if e == nil {
-			return
+			break
 		}
 		s := e.Value.(*traceSlot)
 		if now-s.age < (int64)(*waitTime) {
-			return
+			break
 		}
 		delete(traces, s.id)
 		switch bits.OnesCount64(s.spans) {
@@ -396,4 +414,8 @@ func sweep() (full, part, none int) {
 		}
 		tracesQ.Remove(e)
 	}
+
+	TracesGot.WithLabelValues("full").Add(float64(full))
+	TracesGot.WithLabelValues("partial").Add(float64(part))
+	TracesGot.WithLabelValues("none").Add(float64(none))
 }
