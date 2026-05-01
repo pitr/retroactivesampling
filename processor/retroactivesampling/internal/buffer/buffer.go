@@ -16,6 +16,10 @@ const hdrSize = 28 // 16 traceID + 8 insertedAt(ns) + 4 dataLen
 
 var ErrFull = errors.New("buffer full")
 
+// tombstoneID marks a processed record in a chunk that still has pending records.
+// First byte 0xFF is astronomically unlikely to collide with a real trace ID.
+var tombstoneID = pcommon.TraceID{0xFF}
+
 type interestEntry struct {
 	id      pcommon.TraceID
 	addedAt time.Time
@@ -33,8 +37,9 @@ type SpanBuffer struct {
 	onMatch      func(pcommon.TraceID, []byte)
 	evictObs     func(time.Duration)
 
-	stage  []byte
-	stageN int
+	writeMu sync.Mutex // serializes Write/Flush/Close flush path
+	stage   []byte
+	stageN  int
 
 	scratch []byte
 
@@ -48,6 +53,11 @@ type SpanBuffer struct {
 
 	interestEntries map[pcommon.TraceID]*list.Element
 	interestList    list.List
+
+	// priorityDelivery holds IDs registered via AddInterest that may have records
+	// in chunks beyond rHead. The sweeper scans ahead for these IDs on each wakeup
+	// and delivers out of FIFO order, tombstoning delivered records in place.
+	priorityDelivery map[pcommon.TraceID]struct{}
 
 	wg sync.WaitGroup
 }
@@ -93,7 +103,8 @@ func New(
 		evictObs:        evictObs,
 		stage:           make([]byte, chunkSize),
 		scratch:         make([]byte, chunkSize),
-		interestEntries: make(map[pcommon.TraceID]*list.Element),
+		interestEntries:  make(map[pcommon.TraceID]*list.Element),
+		priorityDelivery: make(map[pcommon.TraceID]struct{}),
 	}
 	b.cond = sync.NewCond(&b.mu)
 	b.wg.Add(1)
@@ -108,12 +119,11 @@ func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 	if el, ok := b.interestEntries[traceID]; ok {
 		b.interestList.MoveToFront(el)
 		el.Value.(*interestEntry).addedAt = time.Now()
-		b.wakeupPending = true
-		b.cond.Signal()
-		return
+	} else {
+		el := b.interestList.PushFront(&interestEntry{id: traceID, addedAt: time.Now()})
+		b.interestEntries[traceID] = el
 	}
-	el := b.interestList.PushFront(&interestEntry{id: traceID, addedAt: time.Now()})
-	b.interestEntries[traceID] = el
+	b.priorityDelivery[traceID] = struct{}{}
 	b.wakeupPending = true
 	b.cond.Signal()
 }
@@ -160,6 +170,8 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 	if recSize > b.chunkSize {
 		return fmt.Errorf("record size %d exceeds chunk size %d", recSize, b.chunkSize)
 	}
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
 	if b.stageN+recSize > b.chunkSize {
 		if err := b.flushStage(); err != nil {
 			return err
@@ -197,6 +209,60 @@ func (b *SpanBuffer) flushStage() error {
 	return nil
 }
 
+// tryDeliverPriority scans all committed chunks beyond rHead for IDs that were
+// added to priorityDelivery since the last call, delivering and tombstoning them
+// without advancing rHead. This enables out-of-FIFO delivery for traces whose
+// records are blocked behind pending records in earlier chunks.
+func (b *SpanBuffer) tryDeliverPriority(rHead, used int64) {
+	b.mu.Lock()
+	if len(b.priorityDelivery) == 0 {
+		b.mu.Unlock()
+		return
+	}
+	priority := b.priorityDelivery
+	b.priorityDelivery = make(map[pcommon.TraceID]struct{})
+	b.mu.Unlock()
+
+	numChunks := int(used/int64(b.chunkSize)) - 1 // skip current chunk at rHead
+	if numChunks <= 0 {
+		return
+	}
+	tmp := make([]byte, b.chunkSize)
+	for i := 1; i <= numChunks; i++ {
+		offset := (rHead + int64(i*b.chunkSize)) % b.maxBytes
+		if _, err := b.f.ReadAt(tmp, offset); err != nil {
+			continue
+		}
+		modified := false
+		pos := 0
+		for pos+hdrSize <= b.chunkSize {
+			var tid pcommon.TraceID
+			copy(tid[:], tmp[pos:pos+16])
+			if tid == (pcommon.TraceID{}) {
+				break
+			}
+			dataLen := int(binary.BigEndian.Uint32(tmp[pos+24:]))
+			recSize := hdrSize + dataLen
+			if pos+recSize > b.chunkSize {
+				break
+			}
+			if tid != tombstoneID {
+				if _, ok := priority[tid]; ok {
+					payload := make([]byte, dataLen)
+					copy(payload, tmp[pos+hdrSize:pos+recSize])
+					b.onMatch(tid, payload)
+					copy(tmp[pos:], tombstoneID[:])
+					modified = true
+				}
+			}
+			pos += recSize
+		}
+		if modified {
+			_, _ = b.f.WriteAt(tmp, offset)
+		}
+	}
+}
+
 func (b *SpanBuffer) runSweeper() {
 	defer b.wg.Done()
 	b.mu.Lock()
@@ -209,9 +275,13 @@ func (b *SpanBuffer) runSweeper() {
 			return
 		}
 		rHead := b.rHead
+		used := b.used
 		b.mu.Unlock()
 
+		b.tryDeliverPriority(rHead, used)
+
 		fullyConsumed := true
+		needsWriteback := false
 		if _, err := b.f.ReadAt(b.scratch, rHead); err != nil {
 			b.mu.Lock()
 			b.rHead = (b.rHead + int64(b.chunkSize)) % b.maxBytes
@@ -221,6 +291,7 @@ func (b *SpanBuffer) runSweeper() {
 			continue
 		}
 
+		var minRemaining time.Duration
 		pos := 0
 		for pos+hdrSize <= b.chunkSize {
 			var tid pcommon.TraceID
@@ -234,6 +305,10 @@ func (b *SpanBuffer) runSweeper() {
 			if pos+recSize > b.chunkSize {
 				break
 			}
+			if tid == tombstoneID {
+				pos += recSize
+				continue
+			}
 			insertedAt := time.Unix(0, nsec)
 
 			b.mu.Lock()
@@ -246,23 +321,36 @@ func (b *SpanBuffer) runSweeper() {
 				payload := make([]byte, dataLen)
 				copy(payload, b.scratch[pos+hdrSize:pos+recSize])
 				b.onMatch(tid, payload)
+				copy(b.scratch[pos:], tombstoneID[:])
+				needsWriteback = true
 				pos += recSize
 				continue
 			}
 			if age >= b.decisionWait || pressure {
 				b.evictObs(age)
+				copy(b.scratch[pos:], tombstoneID[:])
+				needsWriteback = true
 				pos += recSize
 				continue
 			}
 			remaining := b.decisionWait - age
-			time.AfterFunc(remaining, func() {
+			if minRemaining == 0 || remaining < minRemaining {
+				minRemaining = remaining
+			}
+			fullyConsumed = false
+			pos += recSize
+		}
+
+		if !fullyConsumed {
+			if needsWriteback {
+				_, _ = b.f.WriteAt(b.scratch, rHead)
+			}
+			time.AfterFunc(minRemaining, func() {
 				b.mu.Lock()
 				b.wakeupPending = true
 				b.cond.Signal()
 				b.mu.Unlock()
 			})
-			fullyConsumed = false
-			break
 		}
 
 		b.mu.Lock()
@@ -283,6 +371,8 @@ func (b *SpanBuffer) runSweeper() {
 
 // Flush writes any staged records to the ring buffer. Call after a batch of Write calls.
 func (b *SpanBuffer) Flush() error {
+	b.writeMu.Lock()
+	defer b.writeMu.Unlock()
 	if b.stageN == 0 {
 		return nil
 	}
@@ -291,9 +381,11 @@ func (b *SpanBuffer) Flush() error {
 
 // Close flushes any staged records, signals the sweeper to drain, and closes the file.
 func (b *SpanBuffer) Close() error {
+	b.writeMu.Lock()
 	if b.stageN > 0 {
 		_ = b.flushStage()
 	}
+	b.writeMu.Unlock()
 	b.mu.Lock()
 	b.closed = true
 	b.wakeupPending = true
