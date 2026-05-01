@@ -38,12 +38,13 @@ type SpanBuffer struct {
 
 	scratch []byte
 
-	mu     sync.Mutex
-	cond   *sync.Cond
-	wHead  int64
-	rHead  int64
-	used   int64
-	closed bool
+	mu            sync.Mutex
+	cond          *sync.Cond
+	wHead         int64
+	rHead         int64
+	used          int64
+	closed        bool
+	wakeupPending bool // signal sent while sweeper was outside lock
 
 	interestEntries map[pcommon.TraceID]*list.Element
 	interestList    list.List
@@ -107,11 +108,13 @@ func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 	if el, ok := b.interestEntries[traceID]; ok {
 		b.interestList.MoveToFront(el)
 		el.Value.(*interestEntry).addedAt = time.Now()
+		b.wakeupPending = true
 		b.cond.Signal()
 		return
 	}
 	el := b.interestList.PushFront(&interestEntry{id: traceID, addedAt: time.Now()})
 	b.interestEntries[traceID] = el
+	b.wakeupPending = true
 	b.cond.Signal()
 }
 
@@ -187,6 +190,7 @@ func (b *SpanBuffer) flushStage() error {
 	b.mu.Lock()
 	b.wHead = (offset + int64(b.chunkSize)) % b.maxBytes
 	b.used += int64(b.chunkSize)
+	b.wakeupPending = true
 	b.cond.Signal()
 	b.mu.Unlock()
 	b.stageN = 0
@@ -212,6 +216,7 @@ func (b *SpanBuffer) runSweeper() {
 			b.mu.Lock()
 			b.rHead = (b.rHead + int64(b.chunkSize)) % b.maxBytes
 			b.used -= int64(b.chunkSize)
+			b.wakeupPending = true
 			b.cond.Broadcast()
 			continue
 		}
@@ -252,6 +257,7 @@ func (b *SpanBuffer) runSweeper() {
 			remaining := b.decisionWait - age
 			time.AfterFunc(remaining, func() {
 				b.mu.Lock()
+				b.wakeupPending = true
 				b.cond.Signal()
 				b.mu.Unlock()
 			})
@@ -264,9 +270,13 @@ func (b *SpanBuffer) runSweeper() {
 			b.rHead = (rHead + int64(b.chunkSize)) % b.maxBytes
 			b.used -= int64(b.chunkSize)
 			b.pruneInterestLocked()
+			b.wakeupPending = true
 			b.cond.Broadcast()
 		} else {
-			b.cond.Wait() // wait for AfterFunc signal (or Close signal) before re-checking
+			if !b.wakeupPending {
+				b.cond.Wait()
+			}
+			b.wakeupPending = false
 		}
 	}
 }
@@ -286,6 +296,7 @@ func (b *SpanBuffer) Close() error {
 	}
 	b.mu.Lock()
 	b.closed = true
+	b.wakeupPending = true
 	b.cond.Signal()
 	b.mu.Unlock()
 	b.wg.Wait()
