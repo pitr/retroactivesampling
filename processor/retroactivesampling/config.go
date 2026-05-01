@@ -9,11 +9,12 @@ import (
 )
 
 type Config struct {
-	BufferFile      string                  `mapstructure:"buffer_file"`
-	MaxBufferBytes  int64                   `mapstructure:"max_buffer_bytes"`
-	DecisionWaitTime time.Duration          `mapstructure:"decision_wait_time"`
-	CoordinatorGRPC configgrpc.ClientConfig `mapstructure:"coordinator_grpc"`
-	Policies        []evaluator.PolicyCfg   `mapstructure:"policies"`
+	BufferFile       string                  `mapstructure:"buffer_file"`
+	MaxBufferBytes   int64                   `mapstructure:"max_buffer_bytes"`
+	ChunkSize        int                     `mapstructure:"chunk_size"`
+	DecisionWaitTime time.Duration           `mapstructure:"decision_wait_time"`
+	CoordinatorGRPC  configgrpc.ClientConfig `mapstructure:"coordinator_grpc"`
+	Policies         []evaluator.PolicyCfg   `mapstructure:"policies"`
 }
 
 func (c *Config) Validate() error {

@@ -46,8 +46,8 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	buf, err := buffer.New(
 		cfg.BufferFile,
 		cfg.MaxBufferBytes,
+		cfg.ChunkSize,
 		cfg.DecisionWaitTime,
-		buffer.DefaultStageCap,
 		p.onMatch,
 		func(d time.Duration) {
 			tb.RetroactiveSamplingBufferSpanAgeOnEviction.Record(context.Background(), int64(d.Seconds()))
