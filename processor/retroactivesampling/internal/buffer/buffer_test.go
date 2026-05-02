@@ -18,7 +18,7 @@ var randSource = rand.NewChaCha8([32]byte{})
 
 func traceID() pcommon.TraceID {
 	var id pcommon.TraceID
-	randSource.Read(id[:])
+	_, _ = randSource.Read(id[:])
 	return id
 }
 
