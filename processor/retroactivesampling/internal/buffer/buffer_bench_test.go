@@ -27,9 +27,13 @@ func BenchmarkWrite(b *testing.B) {
 
 	now := time.Now().Add(-time.Second)
 
-	// fill up buffer
-	for range bufSize / int64(len(data)) {
-		require.NoError(b, buf.Write(traceID(), data, now))
+	// fill up buffer; stop when the ring is full
+	for range bufSize {
+		err := buf.Write(traceID(), data, now)
+		if err == buffer.ErrFull {
+			break
+		}
+		require.NoError(b, err)
 	}
 
 	b.ReportAllocs()
