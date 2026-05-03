@@ -364,10 +364,10 @@ func (b *SpanBuffer) runSweeper() {
 			pos += recSize
 		}
 
-		if !fullyConsumed {
-			if needsWriteback {
-				_, _ = b.f.WriteAt(b.scratch, rHead)
-			}
+		if needsWriteback {
+			_, _ = b.f.WriteAt(b.scratch, rHead)
+		}
+		if !fullyConsumed && minRemaining > 0 {
 			time.AfterFunc(minRemaining, func() {
 				b.mu.Lock()
 				b.wakeupPending = true
