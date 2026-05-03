@@ -80,7 +80,8 @@ func (b *SpanBuffer) runWriter() {
             select {
             case <-b.pageFreed:
             case <-b.closeCh:
-                return nil // drop on shutdown; closeCh already signals exit
+                stageN = 0 // drop stage on shutdown
+                return nil
             }
         }
         if _, err := b.f.WriteAt(stage, wHead); err != nil {
@@ -94,10 +95,19 @@ func (b *SpanBuffer) runWriter() {
     }
 
     handle := func(req writeReq) {
-        // small record: accumulate in stage, flush when full
-        // large record: flush current stage, then write multi-chunk
-        // same logic as current Write(), errors from flush() silently dropped
-        // (caller already returned nil; backpressure via writeCh is the signal)
+        if hdrSize+len(req.data) <= pageSize {
+            // small record: accumulate in stage, flush when full
+            // same logic as current Write() small-record path
+        } else {
+            // large record: flush current stage first, then claim all space upfront.
+            // If numChunks*pageSize > maxBytes: drop silently (can never fit).
+            // Otherwise: block until used+numChunks*pageSize <= maxBytes (or closeCh).
+            // Only after all N chunks are written to file:
+            //   wHead += N*pageSize, used.Add(N*pageSize), signal wakeup.
+            // If closeCh fires before writing begins: drop cleanly.
+            // If closeCh fires mid-write: orphan written chunks (used not incremented,
+            //   sweeper never reaches them); return.
+        }
     }
 
     for {
@@ -127,7 +137,9 @@ func (b *SpanBuffer) runWriter() {
 
 Key points:
 - `flush()` blocks on `pageFreed` when ring buffer full — stalls writer → fills `writeCh` → callers get `ErrFull`
-- On `closeCh` inside `flush()`, drops data and returns; the outer close case then drains and exits
+- `flush()` resets `stageN = 0` in the `closeCh` branch so subsequent drain-loop accumulation starts clean
+- Large records claim all N pages of space upfront before writing chunk 1; `used` and `wakeup` are only updated after all N chunks are committed — sweeper never sees a partial large record
+- Unflushably large records (`numChunks*pageSize > maxBytes`) are dropped silently in the writer goroutine
 - 50ms ticker ensures partial stages are committed without caller prodding
 - `close(writerDone)` is deferred — fires even on early return
 
@@ -154,13 +166,12 @@ func (b *SpanBuffer) runSweeper() {
             continue
         }
 
-        fullyConsumed, chunksConsumed, minRemaining := processPage(scratch, rHead, closing)
+        fullyConsumed, chunksConsumed, minRemaining := b.processPage(scratch, rHead, closing)
 
         if fullyConsumed {
             rHead = (rHead + int64(chunksConsumed)*int64(pageSize)) % b.maxBytes
             b.used.Add(-int64(chunksConsumed) * int64(pageSize))
             select { case b.pageFreed <- struct{}{}: default: }
-            b.pruneInterestLocked() // interestMu write lock, brief
         } else {
             if minRemaining > 0 {
                 time.AfterFunc(minRemaining, func() {
@@ -181,7 +192,8 @@ Key points:
 - `closing` flag replaces `b.closed` — set once when `writerDone` fires
 - `pressure = b.used.Load() > b.maxBytes*3/4 || closing` — computed per page, no lock
 - When `writerDone` fires with `used > 0`, `closing=true` causes all remaining records to be force-evicted or delivered on subsequent iterations
-- `processPage` extracts the current sweeper body (single-chunk and multi-chunk paths); takes `interestMu` read lock when checking interest, write lock only in `pruneInterestLocked`
+- `processPage` is a `*SpanBuffer` method extracting the current sweeper body (single-chunk and multi-chunk paths); takes `interestMu` **read lock only** when checking interest via `hasInterestRLocked` (read-only, no removal)
+- Sweeper **never takes `interestMu` write lock** — pruning happens in `AddInterest`
 - `writerDone` is a closed channel (broadcast): receiving from it in either wait block returns immediately
 
 ## Public API
@@ -207,10 +219,11 @@ func (b *SpanBuffer) Close() error {
 }
 ```
 
-**`AddInterest`** — write lock + wakeup:
+**`AddInterest`** — write lock, prune expired entries, then add/update:
 ```go
 func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
     b.interestMu.Lock()
+    b.pruneInterestLocked() // remove expired entries from list tail while we have the write lock
     // same list update logic (add or move-to-front with renewed addedAt)
     b.interestMu.Unlock()
     select { case b.wakeup <- struct{}{}: default: }
@@ -222,15 +235,11 @@ func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 func (b *SpanBuffer) HasInterest(traceID pcommon.TraceID) bool {
     b.interestMu.RLock()
     defer b.interestMu.RUnlock()
-    el, ok := b.interestEntries[traceID]
-    if !ok {
-        return false
-    }
-    return time.Since(el.Value.(*interestEntry).addedAt) < b.decisionWait
+    return b.hasInterestRLocked(traceID)
 }
 ```
 
-Stale entries linger in the map until `pruneInterestLocked` runs in the sweeper — correctness is maintained since `HasInterest` returns `false` for expired entries regardless.
+`hasInterestRLocked` is a read-only helper (no map/list mutation) used by both `HasInterest` and `processPage`. Expired entries linger in the map until the next `AddInterest` call prunes them — correctness is maintained since both return `false` for expired entries regardless. The sweeper **never holds `interestMu` write lock**.
 
 **`Flush` is removed.** The processor's `processTraces` drops its `buf.Flush()` call. The 50ms ticker in the writer goroutine provides timely stage commits without caller involvement.
 
