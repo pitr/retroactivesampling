@@ -234,6 +234,9 @@ func (b *SpanBuffer) runWriter() {
 		binary.BigEndian.PutUint32(stage[24:], uint32(len(req.data)))
 		n := copy(stage[hdrSize:], req.data)
 		clear(stage[hdrSize+n:])
+		// WriteAt failure here or in the continuation loop orphans the already-written chunks
+		// (wHead advances but used is not incremented). Recovery would require zeroing orphaned
+		// pages; omitted because WriteAt on a pre-Truncated local file is effectively infallible.
 		if _, err := b.f.WriteAt(stage, wHead); err != nil {
 			return
 		}
