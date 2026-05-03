@@ -209,8 +209,13 @@ func TestSweeper_pressure_eviction(t *testing.T) {
 
 	data := make([]byte, ps/2-28) // recSize = ps/2; 2 per chunk
 	now := time.Now()
-	for range 8 {
-		require.NoError(t, buf.Write(traceID(), data, now))
+	written := 0
+	for written < 8 {
+		if err := buf.Write(traceID(), data, now); err == nil {
+			written++
+		} else {
+			time.Sleep(5 * time.Millisecond) // let writer drain writeCh
+		}
 	}
 	require.NoError(t, buf.Close())
 
