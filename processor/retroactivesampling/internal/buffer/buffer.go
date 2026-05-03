@@ -16,7 +16,7 @@ const hdrSize = 28 // 16 traceID + 8 insertedAt(ns) + 4 dataLen
 
 var ErrFull = errors.New("buffer full")
 
-// tombstoneID marks a processed record in a chunk that still has pending records.
+// tombstoneID marks a processed record in a page that still has pending records.
 // First byte 0xFF is astronomically unlikely to collide with a real trace ID.
 var tombstoneID = pcommon.TraceID{0xFF}
 
@@ -152,7 +152,7 @@ func (b *SpanBuffer) pruneInterestLocked() {
 	}
 }
 
-// Write appends a span record. Returns ErrFull if no chunk slot is available.
+// Write appends a span record. Returns ErrFull if no page slot is available.
 // Returns an error if the record is larger than pageSize.
 func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time.Time) error {
 	recSize := hdrSize + len(data)
