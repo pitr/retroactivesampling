@@ -163,6 +163,126 @@ func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time
 func (b *SpanBuffer) runWriter() {
 	defer b.wg.Done()
 	defer close(b.writerDone)
+
+	stage := make([]byte, pageSize)
+	stageN := 0
+	wHead := int64(0)
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	flush := func() error {
+		clear(stage[stageN:])
+		for b.used.Load()+int64(pageSize) > b.maxBytes {
+			select {
+			case <-b.pageFreed:
+			case <-b.closeCh:
+				stageN = 0
+				return nil
+			}
+		}
+		if _, err := b.f.WriteAt(stage, wHead); err != nil {
+			return err
+		}
+		wHead = (wHead + int64(pageSize)) % b.maxBytes
+		b.used.Add(int64(pageSize))
+		stageN = 0
+		select {
+		case b.wakeup <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	handle := func(req writeReq) {
+		if hdrSize+len(req.data) <= pageSize {
+			recSize := hdrSize + len(req.data)
+			if stageN+recSize > pageSize {
+				_ = flush()
+				if stageN != 0 { // flush returned early (closeCh)
+					return
+				}
+			}
+			copy(stage[stageN:], req.traceID[:])
+			binary.BigEndian.PutUint64(stage[stageN+16:], uint64(req.insertedAt.UnixNano()))
+			binary.BigEndian.PutUint32(stage[stageN+24:], uint32(len(req.data)))
+			copy(stage[stageN+28:], req.data)
+			stageN += recSize
+			return
+		}
+
+		// Large record: must start at a chunk boundary.
+		if stageN > 0 {
+			_ = flush()
+			if stageN != 0 {
+				return
+			}
+		}
+		numChunks := (hdrSize + len(req.data) + pageSize - 1) / pageSize
+		if int64(numChunks)*int64(pageSize) > b.maxBytes {
+			return // unflushably large: drop silently
+		}
+		// Wait until all N pages can be claimed atomically.
+		for b.used.Load()+int64(numChunks)*int64(pageSize) > b.maxBytes {
+			select {
+			case <-b.pageFreed:
+			case <-b.closeCh:
+				return
+			}
+		}
+		// Write first chunk: header + up to (pageSize-hdrSize) data bytes.
+		copy(stage[0:], req.traceID[:])
+		binary.BigEndian.PutUint64(stage[16:], uint64(req.insertedAt.UnixNano()))
+		binary.BigEndian.PutUint32(stage[24:], uint32(len(req.data)))
+		n := copy(stage[hdrSize:], req.data)
+		clear(stage[hdrSize+n:])
+		if _, err := b.f.WriteAt(stage, wHead); err != nil {
+			return
+		}
+		wHead = (wHead + int64(pageSize)) % b.maxBytes
+
+		// Write continuation chunks.
+		off := n
+		for off < len(req.data) {
+			n = copy(stage[0:], req.data[off:])
+			clear(stage[n:])
+			if _, err := b.f.WriteAt(stage, wHead); err != nil {
+				return
+			}
+			wHead = (wHead + int64(pageSize)) % b.maxBytes
+			off += n
+		}
+		// Only after ALL N chunks written: report occupancy and wake sweeper.
+		b.used.Add(int64(numChunks) * int64(pageSize))
+		select {
+		case b.wakeup <- struct{}{}:
+		default:
+		}
+	}
+
+	for {
+		select {
+		case req := <-b.writeCh:
+			handle(req)
+		case <-ticker.C:
+			if stageN > 0 {
+				_ = flush()
+			}
+		case <-b.closeCh:
+			// Drain remaining queued writes then flush any staged data.
+			for {
+				select {
+				case req := <-b.writeCh:
+					handle(req)
+				default:
+					if stageN > 0 {
+						_ = flush()
+					}
+					return
+				}
+			}
+		}
+	}
 }
 
 func (b *SpanBuffer) runSweeper() {
@@ -177,5 +297,3 @@ func (b *SpanBuffer) Close() error {
 	return b.f.Close()
 }
 
-// Keep encoding/binary referenced to avoid import errors until sweeper is implemented.
-var _ = binary.BigEndian
