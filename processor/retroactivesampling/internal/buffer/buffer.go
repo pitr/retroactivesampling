@@ -171,18 +171,18 @@ func (b *SpanBuffer) runWriter() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
-	flush := func() error {
+	flush := func() (closed bool, err error) {
 		clear(stage[stageN:])
 		for b.used.Load()+int64(pageSize) > b.maxBytes {
 			select {
 			case <-b.pageFreed:
 			case <-b.closeCh:
 				stageN = 0
-				return nil
+				return true, nil
 			}
 		}
 		if _, err := b.f.WriteAt(stage, wHead); err != nil {
-			return err
+			return false, err
 		}
 		wHead = (wHead + int64(pageSize)) % b.maxBytes
 		b.used.Add(int64(pageSize))
@@ -191,30 +191,28 @@ func (b *SpanBuffer) runWriter() {
 		case b.wakeup <- struct{}{}:
 		default:
 		}
-		return nil
+		return false, nil
 	}
 
 	handle := func(req writeReq) {
 		if hdrSize+len(req.data) <= pageSize {
 			recSize := hdrSize + len(req.data)
 			if stageN+recSize > pageSize {
-				_ = flush()
-				if stageN != 0 { // flush returned early (closeCh)
+				if closed, _ := flush(); closed {
 					return
 				}
 			}
 			copy(stage[stageN:], req.traceID[:])
 			binary.BigEndian.PutUint64(stage[stageN+16:], uint64(req.insertedAt.UnixNano()))
 			binary.BigEndian.PutUint32(stage[stageN+24:], uint32(len(req.data)))
-			copy(stage[stageN+28:], req.data)
+			copy(stage[stageN+hdrSize:], req.data)
 			stageN += recSize
 			return
 		}
 
 		// Large record: must start at a chunk boundary.
 		if stageN > 0 {
-			_ = flush()
-			if stageN != 0 {
+			if closed, _ := flush(); closed {
 				return
 			}
 		}
@@ -266,7 +264,7 @@ func (b *SpanBuffer) runWriter() {
 			handle(req)
 		case <-ticker.C:
 			if stageN > 0 {
-				_ = flush()
+				_, _ = flush()
 			}
 		case <-b.closeCh:
 			// Drain remaining queued writes then flush any staged data.
@@ -276,7 +274,7 @@ func (b *SpanBuffer) runWriter() {
 					handle(req)
 				default:
 					if stageN > 0 {
-						_ = flush()
+						_, _ = flush()
 					}
 					return
 				}
