@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"encoding/binary"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -40,14 +39,13 @@ import (
 	"google.golang.org/grpc/stats"
 )
 
-const prestartTime = 5 // seconds to wait before we start sending traces
-
 var (
 	dst         = flag.String("dst", "localhost:4317,localhost:4318", "comma separated OTLP gRPC destination servers")
 	server      = flag.String("listen", "0.0.0.0:9000", "OTLP gRPC endpoint to listen to (no TLS!)")
 	metricsAddr = flag.String("metrics", "0.0.0.0:2112", "Prometheus metrics HTTP endpoint address")
 	rate        = flag.Float64("rate", 10, "traces/sec")
 	svcCount    = flag.Int("services", 10, "number of services per trace")
+	warmupTime  = flag.Int("warmup", 5, "seconds to wait before we start sending traces")
 	waitTime    = flag.Int("wait", 20, "seconds to wait for a trace before giving up")
 	stopTime    = flag.Int("stop", 0, "seconds to run for, 0 means forever")
 
@@ -204,7 +202,7 @@ func main() {
 
 	if *stopTime > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(prestartTime+*stopTime)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*warmupTime+*stopTime)*time.Second)
 		defer cancel()
 	}
 
@@ -212,11 +210,15 @@ func main() {
 
 	startMetrics(ctx, *metricsAddr) // &listener.bytes, outBytes
 	startListener(ctx, *server)
-	log.Println("server up, sleeping...")
+	log.Printf("server up, warmup %ds...", *warmupTime)
 
-	time.Sleep(prestartTime * time.Second) // sleep before starting
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Duration(*warmupTime) * time.Second):
+	}
 
-	log.Println("starting")
+	log.Println("trace ingestion started")
 
 	tracers, providers := setup(ctx, strings.Split(*dst, ","), *svcCount, idGen)
 	defer func() {
@@ -257,20 +259,27 @@ func main() {
 			goto done
 		}
 	}
+
 done:
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		log.Printf("stop timer fired, waiting %ds for in-flight spans...", *waitTime)
-		time.Sleep(time.Duration(*waitTime) * time.Second)
-		sweep()
-		mfs, err := prometheus.DefaultGatherer.Gather()
-		if err != nil {
-			log.Printf("gather metrics: %v", err)
-		}
-		enc := expfmt.NewEncoder(os.Stdout, expfmt.NewFormat(expfmt.TypeTextPlain))
-		for _, mf := range mfs {
-			if strings.HasPrefix(*mf.Name, "tracegen_") {
-				_ = enc.Encode(mf)
-			}
+	log.Printf("stopping, waiting %ds for in-flight spans... (ctrl-c to quit)", *waitTime)
+	ctx, stop2 := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop2()
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Duration(*waitTime) * time.Second):
+	}
+
+	sweep()
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		log.Printf("gather metrics: %v", err)
+	}
+	enc := expfmt.NewEncoder(os.Stdout, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, mf := range mfs {
+		if strings.HasPrefix(*mf.Name, "tracegen_") {
+			_ = enc.Encode(mf)
 		}
 	}
 }
