@@ -34,4 +34,4 @@ wait_for_port() {
 wait_for_port 4317
 wait_for_port 4318
 
-./bin/tracegen -stop 60 "$@"
+./bin/tracegen -run 60 "$@"

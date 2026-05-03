@@ -22,7 +22,7 @@ The trace ID encodes a session cookie, a monotonic counter, and an `isErr` flag 
 | `-rate` | `10` | Traces per second to emit |
 | `-services` | `10` | Number of services (spans) per trace; max 64 |
 | `-wait` | `20` | Seconds to wait for a trace's spans before classifying it |
-| `-stop` | `0` | Run duration in seconds, useful for e2e tests; 0 = run until interrupted |
+| `-run` | `0` | Run duration in seconds, useful for e2e tests; 0 = run until interrupted |
 
 ## Metrics
 
@@ -35,13 +35,13 @@ The trace ID encodes a session cookie, a monotonic counter, and an `isErr` flag 
 
 ## Output
 
-When stopped via `-stop N`, after waiting for in-flight spans tracegen prints all `tracegen_*` metrics to stdout in Prometheus text format. This is the sampling quality report.
+When stopped via `-run N`, after waiting for in-flight spans tracegen prints all `tracegen_*` metrics to stdout in Prometheus text format. This is the sampling quality report.
 
 ## Usage example
 
 ```
 # Run for 60 seconds, send to two collectors, receive sampled spans on :9000
-tracegen -dst localhost:4317,localhost:4318 -listen 0.0.0.0:9000 -stop 60
+tracegen -dst localhost:4317,localhost:4318 -listen 0.0.0.0:9000 -run 60
 ```
 
 The collectors must be configured to forward sampled error traces back to `localhost:9000` (or whatever `-listen` is set to). The coordinator must be running on `localhost:9090` for cross-collector coordination to work.

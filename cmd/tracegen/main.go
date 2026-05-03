@@ -45,9 +45,9 @@ var (
 	metricsAddr = flag.String("metrics", "0.0.0.0:2112", "Prometheus metrics HTTP endpoint address")
 	rate        = flag.Float64("rate", 10, "traces/sec")
 	svcCount    = flag.Int("services", 10, "number of services per trace")
-	warmupTime  = flag.Int("warmup", 5, "seconds to wait before we start sending traces")
-	waitTime    = flag.Int("wait", 20, "seconds to wait for a trace before giving up")
-	stopTime    = flag.Int("stop", 0, "seconds to run for, 0 means forever")
+	warmupTime  = flag.Int("warmup", 5, "seconds to wait before starting sending traces")
+	waitTime    = flag.Int("wait", 20, "seconds to wait for a full trace before giving up")
+	runTime     = flag.Int("run", 0, "seconds to run for, 0 means forever")
 
 	BytesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_bytes_total", Help: "Bytes out transferred."}, []string{"direction"})
 	SpansGot   = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "tracegen_spans_received_total", Help: "Spans received."}, []string{"reason"})
@@ -200,9 +200,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if *stopTime > 0 {
+	if *runTime > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(*warmupTime+*stopTime)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*warmupTime+*runTime)*time.Second)
 		defer cancel()
 	}
 
