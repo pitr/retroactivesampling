@@ -153,30 +153,67 @@ func (b *SpanBuffer) pruneInterestLocked() {
 }
 
 // Write appends a span record. Returns ErrFull if no page slot is available.
-// Returns an error if the record is larger than pageSize.
+// Records larger than one page span multiple chunks; they start at a chunk boundary.
 func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time.Time) error {
-	recSize := hdrSize + len(data)
-	if recSize > pageSize {
-		return fmt.Errorf("record size %d exceeds page size %d", recSize, pageSize)
-	}
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	if b.stageN+recSize > pageSize {
+
+	if hdrSize+len(data) <= pageSize {
+		// Small record: accumulate in stage, flush when full.
+		recSize := hdrSize + len(data)
+		if b.stageN+recSize > pageSize {
+			if err := b.flushStage(); err != nil {
+				return err
+			}
+			b.mu.Lock()
+			full := b.used == b.maxBytes
+			b.mu.Unlock()
+			if full {
+				return ErrFull
+			}
+		}
+		copy(b.stage[b.stageN:], traceID[:])
+		binary.BigEndian.PutUint64(b.stage[b.stageN+16:], uint64(insertedAt.UnixNano()))
+		binary.BigEndian.PutUint32(b.stage[b.stageN+24:], uint32(len(data)))
+		copy(b.stage[b.stageN+28:], data)
+		b.stageN += recSize
+		return nil
+	}
+
+	// Large record: must start at a chunk boundary.
+	if b.stageN > 0 {
 		if err := b.flushStage(); err != nil {
 			return err
 		}
-		b.mu.Lock()
-		full := b.used == b.maxBytes
-		b.mu.Unlock()
-		if full {
-			return ErrFull
-		}
 	}
-	copy(b.stage[b.stageN:], traceID[:])
-	binary.BigEndian.PutUint64(b.stage[b.stageN+16:], uint64(insertedAt.UnixNano()))
-	binary.BigEndian.PutUint32(b.stage[b.stageN+24:], uint32(len(data)))
-	copy(b.stage[b.stageN+28:], data)
-	b.stageN += recSize
+	numChunks := (hdrSize + len(data) + pageSize - 1) / pageSize
+	b.mu.Lock()
+	available := b.maxBytes - b.used
+	b.mu.Unlock()
+	if int64(numChunks)*int64(pageSize) > available {
+		return ErrFull
+	}
+
+	// First chunk: header + first (pageSize-hdrSize) bytes of data.
+	copy(b.stage[0:], traceID[:])
+	binary.BigEndian.PutUint64(b.stage[16:], uint64(insertedAt.UnixNano()))
+	binary.BigEndian.PutUint32(b.stage[24:], uint32(len(data)))
+	n := copy(b.stage[hdrSize:], data) // copies exactly pageSize-hdrSize bytes
+	b.stageN = hdrSize + n
+	if err := b.flushStage(); err != nil {
+		return err
+	}
+
+	// Continuation chunks: raw data, no header.
+	off := n
+	for off < len(data) {
+		n = copy(b.stage[0:], data[off:]) // copies min(pageSize, remaining)
+		b.stageN = n                      // flushStage zeros stage[n:pageSize]
+		if err := b.flushStage(); err != nil {
+			return err
+		}
+		off += n
+	}
 	return nil
 }
 

@@ -73,12 +73,23 @@ var _ = sync.Mutex{} // ensure sync imported for later tests
 
 // ---- Write path ----
 
-func TestWrite_recordTooLarge(t *testing.T) {
+func TestWrite_largeRecord_full(t *testing.T) {
+	// 4-chunk ring. Fill 2 chunks with small records (leaving 2 free).
+	// A large record needing 3 chunks returns ErrFull.
 	ps := os.Getpagesize()
 	buf := newBuf(t, 4, time.Hour, nil)
-	data := make([]byte, ps) // hdrSize(28)+ps > ps
-	err := buf.Write(traceID(), data, time.Now())
-	require.ErrorContains(t, err, "exceeds page size")
+
+	// 1 small record per chunk (recSize = ps-1, just under a page).
+	smallData := make([]byte, ps-29) // hdrSize(28) + ps-29 = ps-1 < ps
+	require.NoError(t, buf.Write(traceID(), smallData, time.Now()))
+	require.NoError(t, buf.Write(traceID(), smallData, time.Now()))
+	require.NoError(t, buf.Flush()) // used = 2*ps (2 chunks committed)
+
+	// Large record: dataLen = 2*ps → numChunks = ceil((28 + 2*ps) / ps) = 3.
+	// 3 chunks needed, only 2 free → ErrFull.
+	largeData := make([]byte, 2*ps)
+	err := buf.Write(traceID(), largeData, time.Now())
+	require.ErrorIs(t, err, buffer.ErrFull)
 }
 
 func TestWrite_fillsChunk(t *testing.T) {
