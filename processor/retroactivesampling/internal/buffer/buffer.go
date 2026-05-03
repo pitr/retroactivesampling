@@ -152,6 +152,12 @@ func (b *SpanBuffer) pruneInterestLocked() {
 
 // Write enqueues a span record. Returns ErrFull if the write channel is full.
 func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time.Time) error {
+	if hdrSize+len(data) > pageSize {
+		numChunks := (hdrSize + len(data) + pageSize - 1) / pageSize
+		if int64(numChunks)*int64(pageSize) > b.maxBytes {
+			return ErrFull
+		}
+	}
 	select {
 	case b.writeCh <- writeReq{traceID, data, insertedAt}:
 		return nil
@@ -177,7 +183,7 @@ func (b *SpanBuffer) runWriter() {
 			select {
 			case <-b.pageFreed:
 			case <-b.closeCh:
-				stageN = 0
+				stageN = 0 // buffer full at shutdown; drop staged data
 				return true, nil
 			}
 		}
@@ -456,6 +462,7 @@ func (b *SpanBuffer) runSweeper() {
 }
 
 // Close signals goroutines to stop and closes the file.
+// Callers must stop calling Write before calling Close.
 func (b *SpanBuffer) Close() error {
 	close(b.closeCh)
 	b.wg.Wait()

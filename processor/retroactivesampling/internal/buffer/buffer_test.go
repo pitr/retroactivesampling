@@ -70,8 +70,6 @@ func TestNew_validation(t *testing.T) {
 	})
 }
 
-var _ = sync.Mutex{} // ensure sync imported for later tests
-
 // ---- Write path ----
 
 func TestWrite_largeRecord_full(t *testing.T) {
