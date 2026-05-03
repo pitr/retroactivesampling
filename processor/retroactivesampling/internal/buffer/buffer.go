@@ -301,10 +301,7 @@ func (b *SpanBuffer) runSweeper() {
 					payloadOff := pageSize - hdrSize
 					for i := 1; i < numChunks; i++ {
 						chunkOff := (rHead + int64(i)*int64(pageSize)) % b.maxBytes
-						remaining := dataLen - payloadOff
-						if remaining > pageSize {
-							remaining = pageSize
-						}
+						remaining := min(dataLen-payloadOff, pageSize)
 						_, _ = b.f.ReadAt(payload[payloadOff:payloadOff+remaining], chunkOff)
 						payloadOff += remaining
 					}
