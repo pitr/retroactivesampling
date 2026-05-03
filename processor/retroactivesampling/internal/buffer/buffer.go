@@ -247,8 +247,10 @@ func (b *SpanBuffer) runSweeper() {
 			return
 		}
 		rHead := b.rHead
+		used := b.used
 		b.mu.Unlock()
 
+		chunksConsumed := 1
 		fullyConsumed := true
 		needsWriteback := false
 		if _, err := b.f.ReadAt(b.scratch, rHead); err != nil {
@@ -268,9 +270,63 @@ func (b *SpanBuffer) runSweeper() {
 			if tid == (pcommon.TraceID{}) {
 				break
 			}
-			nsec := int64(binary.BigEndian.Uint64(b.scratch[pos+16:]))
 			dataLen := int(binary.BigEndian.Uint32(b.scratch[pos+24:]))
 			recSize := hdrSize + dataLen
+
+			// Multi-chunk record: always at pos==0 (enforced by write path).
+			if pos == 0 && recSize > pageSize {
+				numChunks := (hdrSize + dataLen + pageSize - 1) / pageSize
+				if tid == tombstoneID {
+					// Already delivered/evicted: skip all N chunks.
+					// dataLen is preserved after tombstoning (only [0:16] overwritten).
+					chunksConsumed = numChunks
+					break
+				}
+				if int64(numChunks)*int64(pageSize) > used {
+					// Not all chunks flushed yet: wait.
+					fullyConsumed = false
+					break
+				}
+				nsec := int64(binary.BigEndian.Uint64(b.scratch[pos+16:]))
+				insertedAt := time.Unix(0, nsec)
+				b.mu.Lock()
+				interesting := b.hasInterestLocked(tid)
+				pressure := b.used > b.maxBytes*3/4 || b.closed
+				b.mu.Unlock()
+
+				age := time.Since(insertedAt)
+				if interesting || age >= b.decisionWait || pressure {
+					payload := make([]byte, dataLen)
+					copy(payload, b.scratch[hdrSize:pageSize]) // first chunk data
+					payloadOff := pageSize - hdrSize
+					for i := 1; i < numChunks; i++ {
+						chunkOff := (rHead + int64(i)*int64(pageSize)) % b.maxBytes
+						remaining := dataLen - payloadOff
+						if remaining > pageSize {
+							remaining = pageSize
+						}
+						_, _ = b.f.ReadAt(payload[payloadOff:payloadOff+remaining], chunkOff)
+						payloadOff += remaining
+					}
+					if interesting {
+						b.onMatch(tid, payload)
+					} else {
+						b.evictObs(age)
+					}
+					copy(b.scratch[0:], tombstoneID[:])
+					needsWriteback = true
+					chunksConsumed = numChunks
+				} else {
+					remaining := b.decisionWait - age
+					if minRemaining == 0 || remaining < minRemaining {
+						minRemaining = remaining
+					}
+					fullyConsumed = false
+				}
+				break // always exit pos loop after multi-chunk record
+			}
+
+			// Single-chunk record.
 			if pos+recSize > pageSize {
 				break
 			}
@@ -278,6 +334,7 @@ func (b *SpanBuffer) runSweeper() {
 				pos += recSize
 				continue
 			}
+			nsec := int64(binary.BigEndian.Uint64(b.scratch[pos+16:]))
 			insertedAt := time.Unix(0, nsec)
 
 			b.mu.Lock()
@@ -324,8 +381,8 @@ func (b *SpanBuffer) runSweeper() {
 
 		b.mu.Lock()
 		if fullyConsumed {
-			b.rHead = (rHead + int64(pageSize)) % b.maxBytes
-			b.used -= int64(pageSize)
+			b.rHead = (rHead + int64(chunksConsumed)*int64(pageSize)) % b.maxBytes
+			b.used -= int64(chunksConsumed) * int64(pageSize)
 			b.pruneInterestLocked()
 			b.wakeupPending = true
 			b.cond.Broadcast()

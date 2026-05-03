@@ -212,6 +212,52 @@ func TestSweeper_pressure_eviction(t *testing.T) {
 	require.Equal(t, 8, evictions)
 }
 
+func TestWrite_largeRecord(t *testing.T) {
+	// Write a 3-chunk record, add interest, verify full payload delivered.
+	ps := os.Getpagesize()
+	var mu sync.Mutex
+	var matched [][]byte
+	onMatch := func(_ pcommon.TraceID, payload []byte) {
+		mu.Lock()
+		matched = append(matched, payload)
+		mu.Unlock()
+	}
+
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), int64(ps*5), time.Hour, onMatch, nil)
+	require.NoError(t, err)
+
+	id := traceID()
+	data := make([]byte, 2*ps) // numChunks = 3
+	for i := range data {
+		data[i] = byte(i % 251) // non-zero pattern to verify correctness
+	}
+	require.NoError(t, buf.Write(id, data, time.Now()))
+	buf.AddInterest(id)
+	require.NoError(t, buf.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, matched, 1)
+	require.Equal(t, data, matched[0])
+}
+
+func TestSweeper_largeRecordEviction(t *testing.T) {
+	// Expired large record must call evictObs exactly once, not once per chunk.
+	ps := os.Getpagesize()
+	var evictions int
+	evictObs := func(time.Duration) { evictions++ }
+
+	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), int64(ps*5), 50*time.Millisecond, nil, evictObs)
+	require.NoError(t, err)
+
+	old := time.Now().Add(-time.Second) // well past decisionWait
+	data := make([]byte, 2*ps)          // numChunks = 3
+	require.NoError(t, buf.Write(traceID(), data, old))
+	require.NoError(t, buf.Close())
+
+	require.Equal(t, 1, evictions)
+}
+
 func TestClose_flushesStage(t *testing.T) {
 	var matched []pcommon.TraceID
 	var mu sync.Mutex
