@@ -54,11 +54,6 @@ type SpanBuffer struct {
 	interestEntries map[pcommon.TraceID]*list.Element
 	interestList    list.List
 
-	// priorityDelivery holds IDs registered via AddInterest that may have records
-	// in chunks beyond rHead. The sweeper scans ahead for these IDs on each wakeup
-	// and delivers out of FIFO order, tombstoning delivered records in place.
-	priorityDelivery map[pcommon.TraceID]struct{}
-
 	wg sync.WaitGroup
 }
 
@@ -104,7 +99,6 @@ func New(
 		stage:           make([]byte, chunkSize),
 		scratch:         make([]byte, chunkSize),
 		interestEntries:  make(map[pcommon.TraceID]*list.Element),
-		priorityDelivery: make(map[pcommon.TraceID]struct{}),
 	}
 	b.cond = sync.NewCond(&b.mu)
 	b.wg.Add(1)
@@ -123,7 +117,6 @@ func (b *SpanBuffer) AddInterest(traceID pcommon.TraceID) {
 		el := b.interestList.PushFront(&interestEntry{id: traceID, addedAt: time.Now()})
 		b.interestEntries[traceID] = el
 	}
-	b.priorityDelivery[traceID] = struct{}{}
 	b.wakeupPending = true
 	b.cond.Signal()
 }
@@ -209,60 +202,6 @@ func (b *SpanBuffer) flushStage() error {
 	return nil
 }
 
-// tryDeliverPriority scans all committed chunks beyond rHead for IDs that were
-// added to priorityDelivery since the last call, delivering and tombstoning them
-// without advancing rHead. This enables out-of-FIFO delivery for traces whose
-// records are blocked behind pending records in earlier chunks.
-func (b *SpanBuffer) tryDeliverPriority(rHead, used int64) {
-	b.mu.Lock()
-	if len(b.priorityDelivery) == 0 {
-		b.mu.Unlock()
-		return
-	}
-	priority := b.priorityDelivery
-	b.priorityDelivery = make(map[pcommon.TraceID]struct{})
-	b.mu.Unlock()
-
-	numChunks := int(used/int64(b.chunkSize)) - 1 // skip current chunk at rHead
-	if numChunks <= 0 {
-		return
-	}
-	tmp := make([]byte, b.chunkSize)
-	for i := 1; i <= numChunks; i++ {
-		offset := (rHead + int64(i*b.chunkSize)) % b.maxBytes
-		if _, err := b.f.ReadAt(tmp, offset); err != nil {
-			continue
-		}
-		modified := false
-		pos := 0
-		for pos+hdrSize <= b.chunkSize {
-			var tid pcommon.TraceID
-			copy(tid[:], tmp[pos:pos+16])
-			if tid == (pcommon.TraceID{}) {
-				break
-			}
-			dataLen := int(binary.BigEndian.Uint32(tmp[pos+24:]))
-			recSize := hdrSize + dataLen
-			if pos+recSize > b.chunkSize {
-				break
-			}
-			if tid != tombstoneID {
-				if _, ok := priority[tid]; ok {
-					payload := make([]byte, dataLen)
-					copy(payload, tmp[pos+hdrSize:pos+recSize])
-					b.onMatch(tid, payload)
-					copy(tmp[pos:], tombstoneID[:])
-					modified = true
-				}
-			}
-			pos += recSize
-		}
-		if modified {
-			_, _ = b.f.WriteAt(tmp, offset)
-		}
-	}
-}
-
 func (b *SpanBuffer) runSweeper() {
 	defer b.wg.Done()
 	b.mu.Lock()
@@ -275,10 +214,7 @@ func (b *SpanBuffer) runSweeper() {
 			return
 		}
 		rHead := b.rHead
-		used := b.used
 		b.mu.Unlock()
-
-		b.tryDeliverPriority(rHead, used)
 
 		fullyConsumed := true
 		needsWriteback := false

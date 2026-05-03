@@ -216,56 +216,6 @@ func TestSweeper_pressure_eviction(t *testing.T) {
 	require.Equal(t, 8, evictions)
 }
 
-// TestSweeper_crossChunkDelivery verifies that AddInterest delivers records from
-// later chunks even while an earlier chunk has pending (unexpired) records.
-func TestSweeper_crossChunkDelivery(t *testing.T) {
-	const cs = 128
-	var mu sync.Mutex
-	var matched []pcommon.TraceID
-	onMatch := func(id pcommon.TraceID, _ []byte) {
-		mu.Lock()
-		matched = append(matched, id)
-		mu.Unlock()
-	}
-
-	buf, err := buffer.New(filepath.Join(t.TempDir(), "buf.ring"), int64(cs*8), cs, time.Hour, onMatch, nil)
-	require.NoError(t, err)
-
-	idA := traceID() // will remain pending (decisionWait=1h)
-	idB := traceID() // will be made interesting
-
-	data := make([]byte, 32) // recSize=60; 2 fit per cs=128 chunk
-
-	// Chunk 0: idA then idA again (2 records, fill the chunk)
-	require.NoError(t, buf.Write(idA, data, time.Now()))
-	require.NoError(t, buf.Write(idA, data, time.Now()))
-	require.NoError(t, buf.Flush()) // flush chunk 0
-
-	// Chunk 1: idB
-	require.NoError(t, buf.Write(idB, data, time.Now()))
-	require.NoError(t, buf.Flush()) // flush chunk 1
-
-	// Mark idB interesting; sweeper must deliver it despite chunk 0 being pending.
-	buf.AddInterest(idB)
-
-	// Wait up to 1s for delivery.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		n := len(matched)
-		mu.Unlock()
-		if n > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Contains(t, matched, idB)
-	require.NotContains(t, matched, idA)
-}
-
 func TestClose_flushesStage(t *testing.T) {
 	const cs = 128
 	var matched []pcommon.TraceID
