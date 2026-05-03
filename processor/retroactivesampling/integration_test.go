@@ -79,7 +79,6 @@ func newE2EProcessor(t *testing.T, coordAddr string, sink *consumertest.TracesSi
 	cfg := &proc.Config{
 		BufferFile:              t.TempDir() + "/buffer.bin",
 		MaxBufferBytes:          100 << 20,
-		ChunkSize:               4096,
 		DecisionWaitTime:        500 * time.Millisecond,
 		CoordinatorGRPC: configgrpc.ClientConfig{
 			Endpoint:   coordAddr,

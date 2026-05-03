@@ -111,7 +111,6 @@ func newTestProcessor(t *testing.T, addr string, sink *consumertest.TracesSink) 
 	cfg := &processor.Config{
 		BufferFile:              filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:          100 << 20,
-		ChunkSize:               4096,
 		DecisionWaitTime:        300 * time.Millisecond,
 		CoordinatorGRPC:         insecureGRPCConfig(addr),
 		Policies:                []evaluator.PolicyCfg{p},
@@ -297,7 +296,6 @@ func TestProbabilistic_NoCoordinatorNotify(t *testing.T) {
 	cfg := &processor.Config{
 		BufferFile:       filepath.Join(t.TempDir(), "buf.ring"),
 		MaxBufferBytes:   100 << 20,
-		ChunkSize:        4096,
 		DecisionWaitTime: 300 * time.Millisecond,
 		CoordinatorGRPC:  insecureGRPCConfig(addr),
 		Policies:         []evaluator.PolicyCfg{p},

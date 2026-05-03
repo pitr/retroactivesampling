@@ -46,7 +46,6 @@ func newProcessor(set component.TelemetrySettings, cfg *Config, next consumer.Tr
 	buf, err := buffer.New(
 		cfg.BufferFile,
 		cfg.MaxBufferBytes,
-		cfg.ChunkSize,
 		cfg.DecisionWaitTime,
 		p.onMatch,
 		func(d time.Duration) {

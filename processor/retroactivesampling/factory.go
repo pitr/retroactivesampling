@@ -23,7 +23,6 @@ func NewFactory() otelprocessor.Factory {
 func createDefaultConfig() component.Config {
 	return &Config{
 		DecisionWaitTime: 30 * time.Second,
-		ChunkSize:        4096,
 	}
 }
 

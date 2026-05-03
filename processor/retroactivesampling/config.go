@@ -11,8 +11,7 @@ import (
 type Config struct {
 	BufferFile       string                  `mapstructure:"buffer_file"`
 	MaxBufferBytes   int64                   `mapstructure:"max_buffer_bytes"`
-	ChunkSize        int                     `mapstructure:"chunk_size"`
-	DecisionWaitTime time.Duration           `mapstructure:"decision_wait_time"`
+DecisionWaitTime time.Duration           `mapstructure:"decision_wait_time"`
 	CoordinatorGRPC  configgrpc.ClientConfig `mapstructure:"coordinator_grpc"`
 	Policies         []evaluator.PolicyCfg   `mapstructure:"policies"`
 }

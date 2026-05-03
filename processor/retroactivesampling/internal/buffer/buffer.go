@@ -20,6 +20,8 @@ var ErrFull = errors.New("buffer full")
 // First byte 0xFF is astronomically unlikely to collide with a real trace ID.
 var tombstoneID = pcommon.TraceID{0xFF}
 
+var pageSize = os.Getpagesize()
+
 type interestEntry struct {
 	id      pcommon.TraceID
 	addedAt time.Time
@@ -32,7 +34,6 @@ type interestEntry struct {
 type SpanBuffer struct {
 	f            *os.File
 	maxBytes     int64
-	chunkSize    int
 	decisionWait time.Duration
 	onMatch      func(pcommon.TraceID, []byte)
 	evictObs     func(time.Duration)
@@ -60,7 +61,6 @@ type SpanBuffer struct {
 func New(
 	file string,
 	maxBytes int64,
-	chunkSize int,
 	decisionWait time.Duration,
 	onMatch func(pcommon.TraceID, []byte),
 	evictObs func(time.Duration),
@@ -74,12 +74,9 @@ func New(
 	if decisionWait <= 0 {
 		return nil, fmt.Errorf("decisionWait must be positive, got %v", decisionWait)
 	}
-	if chunkSize < hdrSize*2 {
-		return nil, fmt.Errorf("chunkSize must be >= %d (2*hdrSize), got %d", hdrSize*2, chunkSize)
-	}
-	maxBytes = (maxBytes / int64(chunkSize)) * int64(chunkSize)
-	if maxBytes < 2*int64(chunkSize) {
-		return nil, fmt.Errorf("maxBytes must be >= 2*chunkSize after rounding, got %d", maxBytes)
+	maxBytes = (maxBytes / int64(pageSize)) * int64(pageSize)
+	if maxBytes < 2*int64(pageSize) {
+		return nil, fmt.Errorf("maxBytes must be >= 2*pageSize after rounding, got %d", maxBytes)
 	}
 	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -92,13 +89,12 @@ func New(
 	b := &SpanBuffer{
 		f:               f,
 		maxBytes:        maxBytes,
-		chunkSize:       chunkSize,
 		decisionWait:    decisionWait,
 		onMatch:         onMatch,
 		evictObs:        evictObs,
-		stage:           make([]byte, chunkSize),
-		scratch:         make([]byte, chunkSize),
-		interestEntries:  make(map[pcommon.TraceID]*list.Element),
+		stage:           make([]byte, pageSize),
+		scratch:         make([]byte, pageSize),
+		interestEntries: make(map[pcommon.TraceID]*list.Element),
 	}
 	b.cond = sync.NewCond(&b.mu)
 	b.wg.Add(1)
@@ -157,15 +153,15 @@ func (b *SpanBuffer) pruneInterestLocked() {
 }
 
 // Write appends a span record. Returns ErrFull if no chunk slot is available.
-// Returns an error if the record is larger than chunkSize-hdrSize.
+// Returns an error if the record is larger than pageSize.
 func (b *SpanBuffer) Write(traceID pcommon.TraceID, data []byte, insertedAt time.Time) error {
 	recSize := hdrSize + len(data)
-	if recSize > b.chunkSize {
-		return fmt.Errorf("record size %d exceeds chunk size %d", recSize, b.chunkSize)
+	if recSize > pageSize {
+		return fmt.Errorf("record size %d exceeds page size %d", recSize, pageSize)
 	}
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
-	if b.stageN+recSize > b.chunkSize {
+	if b.stageN+recSize > pageSize {
 		if err := b.flushStage(); err != nil {
 			return err
 		}
@@ -193,8 +189,8 @@ func (b *SpanBuffer) flushStage() error {
 		return err
 	}
 	b.mu.Lock()
-	b.wHead = (offset + int64(b.chunkSize)) % b.maxBytes
-	b.used += int64(b.chunkSize)
+	b.wHead = (offset + int64(pageSize)) % b.maxBytes
+	b.used += int64(pageSize)
 	b.wakeupPending = true
 	b.cond.Signal()
 	b.mu.Unlock()
@@ -220,8 +216,8 @@ func (b *SpanBuffer) runSweeper() {
 		needsWriteback := false
 		if _, err := b.f.ReadAt(b.scratch, rHead); err != nil {
 			b.mu.Lock()
-			b.rHead = (b.rHead + int64(b.chunkSize)) % b.maxBytes
-			b.used -= int64(b.chunkSize)
+			b.rHead = (b.rHead + int64(pageSize)) % b.maxBytes
+			b.used -= int64(pageSize)
 			b.wakeupPending = true
 			b.cond.Broadcast()
 			continue
@@ -229,7 +225,7 @@ func (b *SpanBuffer) runSweeper() {
 
 		var minRemaining time.Duration
 		pos := 0
-		for pos+hdrSize <= b.chunkSize {
+		for pos+hdrSize <= pageSize {
 			var tid pcommon.TraceID
 			copy(tid[:], b.scratch[pos:pos+16])
 			if tid == (pcommon.TraceID{}) {
@@ -238,7 +234,7 @@ func (b *SpanBuffer) runSweeper() {
 			nsec := int64(binary.BigEndian.Uint64(b.scratch[pos+16:]))
 			dataLen := int(binary.BigEndian.Uint32(b.scratch[pos+24:]))
 			recSize := hdrSize + dataLen
-			if pos+recSize > b.chunkSize {
+			if pos+recSize > pageSize {
 				break
 			}
 			if tid == tombstoneID {
@@ -291,8 +287,8 @@ func (b *SpanBuffer) runSweeper() {
 
 		b.mu.Lock()
 		if fullyConsumed {
-			b.rHead = (rHead + int64(b.chunkSize)) % b.maxBytes
-			b.used -= int64(b.chunkSize)
+			b.rHead = (rHead + int64(pageSize)) % b.maxBytes
+			b.used -= int64(pageSize)
 			b.pruneInterestLocked()
 			b.wakeupPending = true
 			b.cond.Broadcast()

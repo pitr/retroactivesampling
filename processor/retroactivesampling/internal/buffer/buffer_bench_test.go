@@ -20,15 +20,12 @@ func BenchmarkWrite(b *testing.B) {
 	data, err := m.MarshalTraces(singleSpanTraces(traceID(), ptrace.StatusCodeOk, 100))
 	require.NoError(b, err)
 
-	bufSize := 2 * int64(os.Getpagesize())
-	chunkSize := os.Getpagesize()
-	buf, err := buffer.New(filepath.Join(b.TempDir(), "buf.ring"), bufSize, chunkSize, time.Hour, nil, nil)
+	ps := os.Getpagesize()
+	buf, err := buffer.New(filepath.Join(b.TempDir(), "buf.ring"), int64(ps*2), time.Hour, nil, nil)
 	require.NoError(b, err)
 
 	now := time.Now().Add(-time.Second)
-
-	// fill up buffer; stop when the ring is full
-	for range bufSize {
+	for range int64(ps * 2) {
 		err := buf.Write(traceID(), data, now)
 		if err == buffer.ErrFull {
 			break
