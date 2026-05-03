@@ -14,13 +14,14 @@ import (
 
 const hdrSize = 28 // 16 traceID + 8 insertedAt(ns) + 4 dataLen
 
-var ErrFull = errors.New("buffer full")
+var (
+	ErrFull = errors.New("buffer full")
 
-// tombstoneID marks a processed record in a page that still has pending records.
-// First byte 0xFF is astronomically unlikely to collide with a real trace ID.
-var tombstoneID = pcommon.TraceID{0xFF}
-
-var pageSize = os.Getpagesize()
+	// tombstoneID marks a processed record in a page that still has pending records.
+	// First byte 0xFF is astronomically unlikely to collide with a real trace ID.
+	tombstoneID = pcommon.TraceID{0xFF}
+	pageSize    = os.Getpagesize()
+)
 
 type interestEntry struct {
 	id      pcommon.TraceID
@@ -58,13 +59,7 @@ type SpanBuffer struct {
 	wg sync.WaitGroup
 }
 
-func New(
-	file string,
-	maxBytes int64,
-	decisionWait time.Duration,
-	onMatch func(pcommon.TraceID, []byte),
-	evictObs func(time.Duration),
-) (*SpanBuffer, error) {
+func New(file string, maxBytes int64, decisionWait time.Duration, onMatch func(pcommon.TraceID, []byte), evictObs func(time.Duration)) (*SpanBuffer, error) {
 	if onMatch == nil {
 		onMatch = func(pcommon.TraceID, []byte) {}
 	}
