@@ -68,6 +68,15 @@ func TestNew_validation(t *testing.T) {
 		_, err := buffer.New(filepath.Join(dir, "b.ring"), int64(ps*2-1), time.Second, nil, nil)
 		require.Error(t, err)
 	})
+	t.Run("duplicate open returns ErrLocked", func(t *testing.T) {
+		path := filepath.Join(dir, "locked.ring")
+		buf1, err := buffer.New(path, int64(ps*2), time.Second, nil, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = buf1.Close() })
+
+		_, err = buffer.New(path, int64(ps*2), time.Second, nil, nil)
+		require.ErrorIs(t, err, buffer.ErrLocked)
+	})
 }
 
 // ---- Write path ----

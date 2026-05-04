@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -16,7 +17,8 @@ import (
 const hdrSize = 28 // 16 traceID + 8 insertedAt(ns) + 4 dataLen
 
 var (
-	ErrFull = errors.New("buffer full")
+	ErrFull    = errors.New("buffer full")
+	ErrLocked  = errors.New("buffer file is already in use by another process")
 
 	// tombstoneID marks a processed record in a page that still has pending records.
 	// First byte 0xFF is astronomically unlikely to collide with a real trace ID.
@@ -74,9 +76,16 @@ func New(file string, maxBytes int64, decisionWait time.Duration, onMatch func(p
 	if maxBytes < 2*int64(pageSize) {
 		return nil, fmt.Errorf("maxBytes must be >= 2*pageSize after rounding, got %d", maxBytes)
 	}
-	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrLocked
+		}
+		return nil, fmt.Errorf("lock buffer file: %w", err)
 	}
 	if err := f.Truncate(maxBytes); err != nil {
 		_ = f.Close()
