@@ -65,7 +65,7 @@ func loadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(os.ExpandEnv(string(data))), &cfg); err != nil {
 		return nil, err
 	}
 	if cfg.Mode.Proxy != nil {
