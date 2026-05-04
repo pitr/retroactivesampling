@@ -135,6 +135,17 @@ func (b *SpanBuffer) hasInterestRLocked(traceID pcommon.TraceID) bool {
 	return time.Since(el.Value.(*interestEntry).addedAt) < b.decisionWait
 }
 
+// hasInterestForSpanRLocked is used inside processPage where insertedAt is known.
+// It checks whether the decision arrived before the span's own retention window closed,
+// which correctly handles the case where the sweeper is delayed by backpressure.
+func (b *SpanBuffer) hasInterestForSpanRLocked(traceID pcommon.TraceID, insertedAt time.Time) bool {
+	el, ok := b.interestEntries[traceID]
+	if !ok {
+		return false
+	}
+	return el.Value.(*interestEntry).addedAt.Before(insertedAt.Add(b.decisionWait))
+}
+
 func (b *SpanBuffer) pruneInterestLocked() {
 	for {
 		back := b.interestList.Back()
@@ -142,7 +153,10 @@ func (b *SpanBuffer) pruneInterestLocked() {
 			break
 		}
 		e := back.Value.(*interestEntry)
-		if time.Since(e.addedAt) < b.decisionWait {
+		// Keep entries for 2×decisionWait: the sweeper may be delayed by up to
+		// decisionWait while non-error pages age out, so entries pruned at 1×
+		// are gone before the sweeper can use them.
+		if time.Since(e.addedAt) < 2*b.decisionWait {
 			break
 		}
 		b.interestList.Remove(back)
@@ -325,7 +339,7 @@ func (b *SpanBuffer) processPage(scratch []byte, rHead int64, closing bool) (ful
 			insertedAt := time.Unix(0, nsec)
 
 			b.interestMu.RLock()
-			interesting := b.hasInterestRLocked(tid)
+			interesting := b.hasInterestForSpanRLocked(tid, insertedAt)
 			b.interestMu.RUnlock()
 
 			age := time.Since(insertedAt)
@@ -369,7 +383,7 @@ func (b *SpanBuffer) processPage(scratch []byte, rHead int64, closing bool) (ful
 		insertedAt := time.Unix(0, nsec)
 
 		b.interestMu.RLock()
-		interesting := b.hasInterestRLocked(tid)
+		interesting := b.hasInterestForSpanRLocked(tid, insertedAt)
 		b.interestMu.RUnlock()
 
 		age := time.Since(insertedAt)
@@ -468,4 +482,3 @@ func (b *SpanBuffer) Close() error {
 	b.wg.Wait()
 	return b.f.Close()
 }
-
