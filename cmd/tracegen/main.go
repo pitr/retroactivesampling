@@ -200,17 +200,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if *runTime > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(*warmupTime+*runTime)*time.Second)
-		defer cancel()
-	}
-
 	idGen := &TraceIDGen{}
 
 	startMetrics(ctx, *metricsAddr) // &listener.bytes, outBytes
 	startListener(ctx, *server)
 	log.Printf("server up, warmup %ds...", *warmupTime)
+
+	if *runTime > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(*warmupTime+*runTime)*time.Second)
+		defer cancel()
+	}
 
 	select {
 	case <-ctx.Done():
